@@ -5,3 +5,11 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local credentials and generated artifacts
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.coverage
+htmlcov/
+*.log

@@ -1,148 +1,54 @@
-# Knowledge 存储重构与 Write-back
+# 知识库配置与维护
 
-本文记录 2026-09-17 的历史实现。2026-09-22 起，知识需人工整理后发布，BM25 与 Dense 独立就绪；当前行为和迁移要求以[核心代码修改报告](../../log/app-docs/core-fixes-2026-09-22.md)为准。
-
-当前使用要点（2026-09-28 核对）：人工发布前填写问题、适用条件、步骤、验证结果；正文保存在 PG。`active` 表示文本索引就绪，缺向量时仍可用 BM25，Dense 状态另行展示。本文早期“缺向量即 index_failed”等描述属于历史行为。最新测试与演示入口见[收尾验收](../../log/app-docs/verification-2026-09-28.md)和[演示指南](demo-guide.md)。
-
-日期：2026-09-17。沿用单 Agent、模块化单体和既有依赖；没有新增模型调用、reranker、后台队列或分布式事务。
-
-## 架构与两条链路
-
-```text
-JSONL seed → PostgreSQL KnowledgeCase → 精确文档向量缓存 → Milvus
-查询 → Dense / BM25 / Hybrid + RRF → source_id / score / rank
-     → 一次 PG 批量读取 → 正文、metadata、证据快照 → Agent
-
-已解决 Ticket → 确定性候选全文 → reviewer 明确批准
-     → KnowledgeCase pending_index → 缓存向量 / 显式授权生成
-     → Milvus upsert + 强一致读回 → active → 后续工单检索
-```
-
-- `knowledge/models.py`、`seed.py`、`repository.py`、`service.py`：权威内容、冻结导入、批量读取、人工批准和操作审计。
-- `knowledge/index.py`、`sync.py`：派生索引、精确向量缓存、失败状态和显式修复。
-- `retrieval/service.py`：正式路径只取索引身份与分数，RRF 后一次批量 hydration，保留 Milvus 排名。各通道候选、耗时和不一致项继续保存到工具审计。
-- `agent/runtime.py` 默认持有 `KnowledgeStore` 和 Session 工厂，不持有全量案例；`get_case_detail` 经 Store 单条读 PG。模型没有数据库连接、SQL 或写工具。
-- `api/routes/knowledge.py` 和 `/sources`、`workbench/app.py`：可信身份、版本、幂等标识与 HTTP 工作台。
-
-Milvus 新生产集合仅保存 source_id、corpus_version、content_hash、embedding、BM25 派生文本与 sparse。BM25 必须保存可分词文本，这是可重建的索引材料；Agent 从不将它当权威正文返回。旧固定评测集合保留原 `text` 字段和向量，以兼容历史实验。
-
-## 数据库与版本
-
-Alembic **b812ce904a61** 基于 **9c42d71ab203** 新增：
-
-| 表 | 关键字段与约束 |
-| --- | --- |
-| knowledge_datasets | version 主键；kind=synthetic/production；manifest；collection_name 唯一；创建时间 |
-| knowledge_cases | (dataset_version, source_id) 联合主键；标题、问题、完整知识正文、结构化来源、metadata；source_type；source_ticket_id 外键且唯一；内容 hash、revision；状态 version；reviewer/approved_at；index_error/indexed_hash/indexed_at；retired_at 与创建/更新时间 |
-| knowledge_operations | resource/actor/operation/Idempotency-Key 联合唯一；请求 hash 和时间，用于批准、重试、停用审计 |
-| knowledge_embeddings | 按 provider/region/workspace/model/dimension/document text 计算 fingerprint；保存完整身份与向量；成功向量先提交，再写索引 |
-
-知识约束要求状态在 `pending_index / active / index_failed / retired` 内、版本为正、active 有匹配 indexed_hash，ticket 来源必须有原工单及人工批准人/时间。`(dataset_version, status)` 有索引。迁移不读取模型、不连接 Milvus、不修改旧表；空表可降级，有数据时拒绝有损降级。业务表不在应用启动时创建。
-
-`corpus_version` 不删除：固定 synthetic-v2 完整内容 hash 保持不变，用作 dataset_version；旧 ProcessingResult、评测标签 hash、提示词缓存和集合 manifest 仍可解释。生产用 `production-v1` 表示独立知识命名空间；每条证据额外保存 knowledge_revision、content_hash、synthetic、metadata 与完整正文。它不伪装成生产知识总快照版本。
-
-本阶段正文创建后不提供原地编辑，revision 为 1；状态更新只递增 version，不改正文。已停用来源仍能经版本化 `/sources` 审计，不能进入正常检索。后续若新增知识编辑，必须增加版本保留设计，不能覆盖旧 revision。旧运行的证据快照保持原样。
-
-## 人工批准与工作台
-
-resolved 工单的候选是从已发布消息按 sequence_number 和作者标签构造的只读视图，包括客户更新、已批准回复、人工回复及关闭说明；不读取未批准的模型草稿，也不再调用 LLM 总结。GET 不写数据库。采用派生候选是因为 resolved 是终态，避免额外候选表和无意义的自动写入。
-
-reviewer 在工单底部查看全文、勾选确认、点击 **Publish to Knowledge Base**，再确认固定请求。批准事务锁住原 Ticket，核对 expected_version，保存固定 `TICKET-{UUID}` 来源及人工审核；同一 Ticket 最多一条知识。工单本身不再次关闭或追加消息。
-
-| 接口 | 权限 / 版本 |
-| --- | --- |
-| GET /tickets/{ticket}/knowledge | operator/reviewer；eligible、candidate 或 knowledge |
-| POST /tickets/{ticket}/knowledge/approve | reviewer；expected_version 是 Ticket.version |
-| GET /knowledge/{dataset}/{source} | operator/reviewer；全文及审核、索引状态 |
-| POST /knowledge/{dataset}/{source}/retry | reviewer；expected_version 是 KnowledgeCase.version |
-| POST /knowledge/{dataset}/{source}/retire | reviewer；版本同上，先在 PG 停用再删除索引 |
-| GET /sources/{source}?corpus_version={dataset} | PG 的不可变版本来源；缺失返回 404，无 JSONL fallback |
-
-所有 POST 需要 Idempotency-Key，同 key 改请求返回 409；同 key 恢复不重复批准。同 Ticket 不同 key 再次批准也返回已有案例，审核人/时间不被覆盖。重试只作用于已有知识。工作台的 reviewer 可以查看已发布知识全文、勾选确认并停用尚未 retired 的知识；停用保留 PG 历史记录，不提供重新启用入口。若 Milvus 索引删除失败，停用状态保持不变，界面提供单独的“重试清理停用知识的索引”入口。operator 没有发布、停用或索引重试按钮，绕过页面调用 API 也返回 403。工作台只走 HTTP，不访问 PG、Milvus 或 Agent。
-
-## 一致性与恢复
-
-| 情况 | 行为 |
-| --- | --- |
-| 批准已提交，索引尚未写 | pending_index；可显式 reconcile |
-| 缺向量且预算为零 | index_failed / embedding_cache_missing；不调用模型 |
-| Embedding 成功，Milvus 失败 | 向量已单独提交；失败状态可见，下次复用向量 |
-| Milvus 成功，PG 状态提交失败 | pending/failed；下次先读回同 ID/hash，确认后激活，不重复生成向量 |
-| active 的 Milvus 行丢失 | `--repair-active` 检查并用 PG 缓存重建 |
-| Milvus 有 / PG 无 | 运行时过滤并继续分页补候选，避免 orphan 占满 top_k；显式 reconcile 扫描索引并删除 orphan |
-| PG 停用 / Milvus 删除失败 | 仍是 retired，记录删除错误；hydration 立即过滤，reconcile 再删除 |
-| 停用与索引网络请求并发 | 网络返回后的版本检查不能覆盖较新的停用状态；后续修复残留索引 |
-
-同步以数据库/schema/dataset 作用域的 advisory lock 串行执行。它持有专用连接，但网络期间不持有数据库事务或行锁；进程断开时 PG 释放锁。并发同步返回 `knowledge_sync_busy`，不会启动第二次外部操作。upsert 使用稳定 ID，读回确认后才设 active。
-
-不一致项包含 source_id、dataset_version 和稳定错误码，失败不泄露上游原始异常。PG 全部不可写时无法保证错误立即落库，原 pending/旧状态及应用日志保留；恢复后显式修复。正常 API 检索仍保持只读，只会发现本次排名窗口中的不一致；它会继续按排名分页，直到补足有效 top_k 或 Milvus 结果耗尽。显式 reconcile 额外按 source_id 有序扫描整个索引，与 PG 分批比对并删除未被查询命中的 orphan。
+PostgreSQL 保存权威正文、来源、版本、审核和状态；Milvus 保存可重建索引。运行检索按来源 ID 从 PostgreSQL 读取正文并核对状态与 hash，索引命中本身不代表证据可信。
 
 ## 初始化与运维命令
 
-在项目根目录运行，使用原 `.env`，不重写凭据：
+在仓库根目录运行，连接配置读取 `.env`：
 
 ```powershell
 uv run --no-sync alembic upgrade head
 uv run --no-sync python scripts/knowledge.py seed
-# 可选：已有匹配的文档向量缓存时导入，BM25 就绪不要求此步骤
+# 已有精确匹配向量缓存时可选；缺缓存不会自动生成
 uv run --no-sync python scripts/knowledge.py import-cache
-uv run --no-sync python scripts/knowledge.py reconcile --dataset production-v1
 ```
 
-seed 可重复执行；相同内容不会重复插入或复活 retired，也不会调用 embedding。不同合成内容保留为另一冻结数据集，不覆盖旧数据。import-cache 验证现有 `data/cache/embeddings` 的完整精确身份后导入 PG；缺文件即失败。生产与合成索引分离，生产初始为空。
-
-固定合成集：
+`seed` 使用 `TICKETMIND_CORPUS_PATH`（默认 `data/synthetic/v2/historical_cases.jsonl`），冻结数据集由内容 hash 标识。重复导入相同内容不重复插入，也不重新激活停用案例。
 
 ```powershell
 $dataset = 'synthetic-v2-e5b5a59a7e1481ad3b095d518772354155d891e51ad2a367cf5f7be26540228f'
 uv run --no-sync python scripts/knowledge.py reconcile --dataset $dataset
-$env:TICKETMIND_KNOWLEDGE_DATASET = $dataset
-uv run --no-sync python scripts/start_local.py --skip-infra
 ```
 
-恢复生产模式，设置 `TICKETMIND_KNOWLEDGE_DATASET=production-v1`。生产新增知识不改变数据集名、分析器或集合，也不需要重启。变更整个数据集选择仍是服务配置变更。
+BM25 不要求文档向量；`active` 表示文本索引就绪，Dense 就绪单独记录。缺向量时默认不调用 Embedding，Dense 保持未就绪。使用 Dense 需准备匹配当前 provider / region / workspace / model / dimension / 正文的向量缓存并同步；Hybrid 可通过关键词通道召回无向量知识。查询向量在真实 Dense / Hybrid 运行中仍可能调用 Embedding。
 
-修复入口默认扫描最多 100 条 pending/failed 或删除未完成的 retired，按更新时间轮转；`--limit` 最大 1000：
+生产知识使用独立 `production-v1`。选择它时在 `.env` 设置 `TICKETMIND_KNOWLEDGE_DATASET=production-v1` 并重启服务；固定 v2 启动器会覆盖该选择，须改用 `scripts/start_local.py`。
+
+## 人工发布与索引修复
+
+1. reviewer 明确关闭已解决工单。
+2. 在工作台核对会话，填写问题、适用条件、处理步骤和验证结果。
+3. 确认发布请求；系统先保存批准记录与知识正文，再同步索引。
+4. 查看文本 / Dense 状态；失败时显式重试，不把待审草稿当知识。
+
+所有写入校验角色、版本和幂等键。同一工单只发布一条知识，正文不支持原地编辑；停用保留 PostgreSQL 历史记录，立即禁止正常检索使用该来源。索引删除失败可再次清理。
 
 ```powershell
 uv run --no-sync python scripts/knowledge.py reconcile --dataset production-v1
-# reconcile 同时清理 Milvus 中 PG 不存在的 orphan；输出 orphans_removed
 uv run --no-sync python scripts/knowledge.py reconcile --dataset production-v1 --repair-active
 uv run --no-sync python scripts/knowledge.py reconcile --dataset production-v1 --source-id TICKET-实际UUID
 ```
 
-HTTP 发布/重试没有付费开关，默认只用缓存。只有取得新的明确授权后，管理员才能执行以下**示例**，它不是当前已授权预算：
+同步按数据库 / schema / dataset 使用 advisory lock，网络期间不持有业务事务。Milvus 写入后核对 ID/hash；失败保留诊断，成功的向量缓存可复用。`--repair-active` 检查已激活但缺失的索引；reconcile 也清理索引中不存在于 PostgreSQL 的孤儿来源。
+
+默认 `--embedding-budget=0`。确需新向量时，先确认模型、接口、配置与额度，再指定正预算及持久化 `--ledger`；失败请求也计入预算，不删除台账重置额度。HTTP 发布与重试没有隐式付费开关。
+
+## 产品 Docs
 
 ```powershell
-uv run --no-sync python scripts/knowledge.py reconcile --dataset production-v1 --source-id TICKET-实际UUID --embedding-budget 1 --ledger data/cache/knowledge/approved-batch/attempts.json
+uv run --no-sync python -m ticketmind.documents.cli data/synthetic/docs --version synthetic-product-docs-v1
 ```
 
-复用项目的 AttemptLedger 和单次 HTTP transport：发送前持久化记账，累计上限、重复请求指纹及失败尝试均受约束；不自动重试、不能删除台账恢复额度。知识文档只使用 initial_embedding 类别，其他三类额度为零。正预算必须指定台账。当前零预算缺缓存时记录 Dense 未就绪，BM25 同步仍可成功；须同时检查文本与向量状态。
+设置 `TICKETMIND_DOCS_DATASET=synthetic-product-docs-v1`、`TICKETMIND_DOCS_RETRIEVAL_MODE=bm25`、`TICKETMIND_AGENT_VERSION=ticketmind-tools-docs-v2`。导入与分块可重复执行，使用 `--no-index` 时索引未就绪。Docs 为独立 PostgreSQL chunk 存储和 BM25 集合，当前 Hybrid 配置显式降级到 BM25。导入目录中的每个 Markdown 都被作为产品文档，因此不能放工程 README、标签或面试资料。
 
-`serve_m5_demo.py` 的知识索引/向量替身仅在隔离演示明确注入，数据仍通过真实 PG/API 保存；界面已有演示标记。其 active 只说明替身索引状态，不能当作真实 Milvus 验收。
-
-## 验证与限制
-
-最终 **199 passed，0 failed / error / skipped**：原回归 **161** 项，新增 **38** 项；**112** 项逻辑/替身与 **87** 项真实 PostgreSQL。新增部分为知识 PG/API 32、真实 Milvus 2、工作台 HTTP/PG 3、超时预算逻辑 1；保留两条既有依赖弃用警告。逐项数量和本机证据见 [knowledge-verification.json](../../log/app-docs/knowledge-verification.json)，原始 JUnit 在忽略提交的 `data/cache/knowledge/regression.xml`。
-
-额外执行原 M3 **8/8** 真实 HTTP/PG/Milvus 场景，旧集合文本和向量 hash 核对未变；M4 离线预检、M0 图缓存预检、旧 versioned 导入命令均通过。当前 development 数据库已迁移到 b812ce904a61；首次 seed 12、再次新增 0，精确缓存重复导入后无重复向量记录，12 条冻结合成知识 active，生产空集合已初始化。未改写既有工单/运行/审核。
-
-本阶段新增真实付费调用：**LLM 0、Embedding 0、其他 0**。测试中的确定性向量和本机 SDK 故障请求不计为供应商调用。
-
-全套默认测试跳过真实数据库；完整零付费验收命令：
-
-```powershell
-$env:TICKETMIND_RUN_DB_TESTS = '1'
-$env:TICKETMIND_RUN_MILVUS_TESTS = '1'
-uv run --no-sync python -m pytest -q
-```
-
-新集成测试覆盖真实 PG 的 seed、缓存幂等、批准权限与并发、索引失败/修复、状态事务失败、停用竞争、批量 hydration、无 JSONL runtime、迁移降级以及默认 HTTP 零预算。工作台测试通过 AppTest → loopback HTTP → PG，索引/向量为明确替身。Milvus 测试使用独立 UUID 集合验证 HTTP 批准→索引→新工单 Agent→PG 证据、三种模式、修复和孤儿过滤；旧固定集合仅只读比较排名和正文。测试结束只清理测试自己的 schema/集合。
-
-真实仍有的限制：
-
-- 新知识正文是完整已发布会话，未做 LLM 摘要或自动去隐私处理；reviewer 必须核对全部内容及适用性。没有案例编辑功能，过长内容（索引上限 16384 UTF-8 bytes）在调用向量前失败，不静默截断。
-- 生产固定分析器与旧冻结评测的词典不同；没有新的生产语义质量/排序指标。M4 的状态措辞、追问缺失及未运行样本限制不变。
-- 未授权新向量时，新内容可以完成批准但会停在明确失败状态；需要管理员获授权后同步。没有可靠异步队列、自动定时修复或分布式事务。
-- 单实例单 worker、单团队预置身份；没有外部邮件或真实客户发布。schema migration/知识初始化在本地开发库执行，不等于生产部署。
-- 本阶段未进行新的真实模型决策验收或浏览器人工验收；AppTest 与真实服务测试不能替代模型效果评测。
+Phase 7 产品文档是另一冻结版本；导入及验收条件见 [数据集说明](../data/synthetic/phase7_v1/README.md)。演示模式的索引替身不能当作真实 Milvus 验证。架构与接口见 [架构说明](architecture.md)，验证见 [验证指南](verification.md)。

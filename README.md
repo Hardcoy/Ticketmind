@@ -1,178 +1,89 @@
-# TicketMind
+# TicketMind 本地配置
 
-**基于 RAG 与 Human-in-the-Loop 的 SaaS 技术支持工单 Agent**
+以下命令在仓库根目录执行，适用于 Windows PowerShell。
 
-TicketMind 是一个可在本地运行的工单处理系统：接收客户问题，检索历史解决记录，由 Agent 生成解决建议、必要追问或转人工提案；人工审核后才发布回复或更新工单状态。已解决工单还可以经审核沉淀为知识，供后续检索复用。
+## 1. 安装与环境变量
 
-项目面向**合成 SaaS 业务场景与个人工程实践**，包含 FastAPI 服务、Streamlit 工作台、PostgreSQL 持久化、Milvus 检索及模型调用链路。它不是已接入真实客户渠道的线上客服服务。
-
-求职展示从[交付说明](docs/internship-handoff.md)开始：[五分钟演示](docs/demo-guide.md)、[RAG 与 Agent 评估](../log/app-docs/rag-evaluation.md)、[面试讲解](docs/interview-guide.md)。2026-09-28 使用真实 PostgreSQL、Milvus 和确定性模型替身完成 **286 项测试，全部通过**；条件与边界见[本轮验收记录](../log/app-docs/verification-2026-09-28.md)。
-
-2026-10-06 的最新 Tool / Docs 架构、迁移、预算与验证范围见[本次交付报告](../log/app-docs/tool-docs-refactor-verification.md)。当前模型动作有五种，检索工具仅为 `search_cases` 与 `search_docs`；本轮使用真实 PostgreSQL 和检索/模型替身，真实 Milvus 与 LangSmith 云端未验收。
-
-## 核心功能
-
-| 模块 | 能力 |
-| --- | --- |
-| 工单与工作台 | 创建工单、查看消息和运行记录、接收客户补充、人工回复及明确关闭 |
-| Agent 决策 | 基于当前工单、Cases 和 Docs，选择搜索案例、搜索产品文档、提出解决方案、追问或建议转人工 |
-| 检索增强 | Cases 支持 BM25、Dense 和 Hybrid；独立 Docs chunk 索引首版支持 BM25，Hybrid 显式降级到 BM25 |
-| 提案与审核 | 结构化输出、独立 Semantic Judge、人工批准/编辑/转人工；所有最终提案先进入待审核状态 |
-| 持久化与恢复 | PostgreSQL 工单与审核记录、LangGraph 检查点、幂等写入及版本冲突校验 |
-| 知识沉淀 | 人工批准已解决工单入库；PostgreSQL 保存权威正文，Milvus 建立索引，支持重试索引和停用知识 |
-
-**证据使用原则：** Agent 可以在当前客户事实足够时生成不引用历史案例的解决提案（`evidence_ids=[]`）；引用历史案例时，引用 ID 必须来自本次检索。检索命中或提案通过结构校验都不代表内容已由人工确认。
-
-## 系统架构
-
-```mermaid
-flowchart LR
-    UI[Streamlit 工作台] --> API[FastAPI]
-    API --> T[工单与审核服务]
-    T <--> PG[(PostgreSQL)]
-    T --> A[LangGraph Agent]
-    A --> R[BM25 / Dense / Hybrid]
-    R <--> MV[(Milvus 索引)]
-    R --> K[知识正文读取]
-    K --> PG
-    A --> D[Decision 模型]
-    A --> J[Semantic Judge]
-    A --> H[待人工审核]
-    H --> T
-    T --> W[已解决工单经批准入库]
-    W --> PG
-    W --> MV
-```
-
-模型可使用的检索工具仅执行只读操作；发布回复、转人工和关闭工单由业务服务在人工审核后处理。工作台只通过 HTTP API 访问业务功能，不直连数据库或模型。
-
-## 快速启动
-
-下面是 **Windows 本地真实模型模式**的日常启动方式，使用已经准备好的 PostgreSQL、Milvus 和 v2 合成知识库。
-
-### 首次配置
-
-需要 Python 3.12、[uv](https://docs.astral.sh/uv/)、PostgreSQL、Docker / Milvus，以及可用的模型服务凭据。
+准备 Python 3.12、uv、Docker Desktop，以及 PostgreSQL（本机服务或下方容器）。
 
 ```powershell
 uv sync --locked
 if (-not (Test-Path .env)) { Copy-Item env.example .env }
 ```
 
-在根目录 `.env` 中填写本地 PostgreSQL 连接、`DASHSCOPE_API_KEY`、`DASHSCOPE_WORKSPACE_ID` 和 Milvus 地址；然后执行：
+编辑 `.env`：
+
+| 配置 | 填写内容 |
+| --- | --- |
+| `TICKETMIND_DATABASE_URL` | `postgresql+psycopg://用户名:密码@主机:端口/数据库`；密码特殊字符需 URL 编码 |
+| `DASHSCOPE_API_KEY` | 百炼 API Key |
+| `DASHSCOPE_WORKSPACE_ID` | 与 Key 对应的北京地域业务空间 ID |
+| `TICKETMIND_DECISION_MODEL` | 示例为 `qwen3.8-flash` |
+| `TICKETMIND_JUDGE_MODEL` | 配置独立审核模型；示例为 `deepseek-v4.1-flash` |
+| `TICKETMIND_MILVUS_URI` | 本地为 `http://127.0.0.1:19530` |
+| `TICKETMIND_RETRIEVAL_MODE` | 首次使用 `bm25`；不需要文档向量缓存 |
+| `TICKETMIND_DOCS_DATASET` | `synthetic-product-docs-v1` |
+| `TICKETMIND_DOCS_RETRIEVAL_MODE` | `bm25` |
+| `TICKETMIND_AGENT_VERSION` | `ticketmind-tools-docs-v2` |
+
+生成本地 operator / reviewer 登录令牌，不覆盖已有令牌：
 
 ```powershell
 uv run --no-sync python scripts/configure_local_auth.py
+```
+
+`.env`、登录令牌和本地缓存不提交 Git。模型配置示例不代表调用授权；实际处理工单会调用模型并可能产生费用。
+
+## 2. 启动 PostgreSQL 与 Milvus
+
+已有 PostgreSQL 服务时，在 `.env` 填写其实际连接信息。使用仓库容器时执行：
+
+```powershell
+if (-not (Test-Path infra/postgres/.env)) { Copy-Item infra/postgres/env.example infra/postgres/.env }
+# 编辑 infra/postgres/.env，设置 POSTGRES_PASSWORD
+docker compose --project-directory infra/postgres up -d --wait
+```
+
+容器连接为 `localhost:5433`，用户 `ticketmind_app`，数据库 `ticketmind_dev`；根目录 `.env` 的密码须与 `POSTGRES_PASSWORD` 一致。
+
+```powershell
+docker compose --project-directory infra/milvus up -d --wait
 uv run --no-sync alembic upgrade head
 ```
 
-`.env` 仅保存在本地，不提交真实凭据。**v2 数据集需要预先完成 seed 和索引同步，并确认 BM25 就绪、知识状态为 `active`**；Dense 还需要向量缓存和独立索引就绪。新机器的初始化与缓存缺失处理参见[知识库初始化与同步说明](docs/knowledge-writeback.md#初始化与运维命令)。日常启动不会重复导入知识或生成文档 Embedding。
+## 3. 初始化示例知识库
 
-使用 Docs 工具前，准备两篇明确标注 synthetic 的产品文档及独立 BM25 索引；此命令只访问 PostgreSQL/Milvus，不调用模型或 Embedding：
+以下使用仓库的 `synthetic-v2` 合成案例与两篇合成产品文档，不调用模型或 Embedding：
 
 ```powershell
+uv run --no-sync python scripts/knowledge.py seed
+$dataset = 'synthetic-v2-e5b5a59a7e1481ad3b095d518772354155d891e51ad2a367cf5f7be26540228f'
+uv run --no-sync python scripts/knowledge.py reconcile --dataset $dataset
 uv run --no-sync python -m ticketmind.documents.cli data/synthetic/docs --version synthetic-product-docs-v1
 ```
 
-配置 `TICKETMIND_DOCS_DATASET=synthetic-product-docs-v1`、`TICKETMIND_DOCS_RETRIEVAL_MODE=bm25` 与 `TICKETMIND_AGENT_VERSION=ticketmind-tools-docs-v2`。导入与分块可重复执行；仅执行 `--no-index` 时 Docs 保持未就绪，详见[初始化和版本约束](../log/app-docs/tool-docs-refactor-verification.md#初始化与使用)。
+在 `.env` 设置 `TICKETMIND_KNOWLEDGE_DATASET` 为上述 `$dataset` 的完整值。确认案例状态为 `active`、Docs 索引就绪后再启动。Dense / Hybrid 配置及知识发布见 [知识库配置](docs/knowledge-writeback.md)。
 
-### 一键启动（v2 + Flash + BM25）
+## 4. 启动应用
+
+读取 `.env` 中的配置：
 
 ```powershell
-.\start_v2_flash.cmd
+uv run --no-sync python scripts/start_local.py --skip-infra
 ```
 
-默认启动入口固定本次运行的配置：
-
-| 项目 | 启动值 |
-| --- | --- |
-| 知识数据集 | 冻结的 `synthetic-v2` |
-| Decision 模型 | `qwen3.8-flash` |
-| 检索模式 | `bm25` |
-
-Judge 模型、数据库和模型凭据等其余配置仍来自现有 `.env`。这个入口**不会修改** `.env`；如果 PostgreSQL 和 Milvus 都已经在运行，可以使用：
+也可使用固定 `synthetic-v2 / qwen3.8-flash / bm25` 的入口，Judge 等其余配置仍读取 `.env`：
 
 ```powershell
 .\start_v2_flash.cmd --skip-infra
 ```
 
-默认启动器可尝试启动项目提供的 Milvus Docker Compose，但 PostgreSQL 必须已运行，或在启动时显式使用现有的 `--postgres-service` / `--postgres-container` 选项。启动完成后访问：
+工作台：[http://127.0.0.1:8501](http://127.0.0.1:8501)；API 文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。从本地 `.env` 读取对应角色令牌登录。`Ctrl+C` 停止 API 和工作台，数据库与索引保留。
 
-- **工作台：** [http://127.0.0.1:8501](http://127.0.0.1:8501)
-- **API 文档：** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
-终端按 `Ctrl+C` 停止本次启动的 API/UI，保留数据库与 Milvus 数据。创建工单并发起真实模型处理可能产生模型调用费用。
-
-**不调用真实模型的界面演示：** 如果只想查看工单和人工审核流程，在 PostgreSQL 可用的情况下运行 `uv run --no-sync python scripts/start_local.py --demo`。这是带明确标记的隔离替身模式，不用于评价模型效果。
-
-## 使用流程
-
-1. 在工作台创建工单并发起处理，查看模型提案、历史案例/产品文档 chunk 证据和工具调用记录。
-2. 人工审核解决建议、追问或转人工提案；可以编辑回复后批准。生成提案本身不会向客户发送消息或关闭工单。
-3. 客户补充信息后可以对新消息再次处理；确认解决后，由人工明确关闭工单。
-4. 对已解决工单，reviewer 可以检查待入库内容并批准发布到知识库；索引状态为 `active` 后，新工单可以检索到该知识。
-
-当前“发布回复”指保存到系统内部的工单消息；没有接入真实邮件、外部派单或第三方客服平台。
-
-如果中断运行无法恢复并阻塞工单，reviewer 可在运行记录中填写原因，选择“终止中断运行”并确认，随后继续人工回复、接管或关闭。该操作不调用模型，保留检查点和审计记录；仍在执行的请求会被拒绝终止。
-
-当前核心操作支持：编辑审核时同时选择最终动作、独立人工接管、从检查点恢复已结束请求的运行状态，以及发布前人工整理知识正文。每次处理可以选择 BM25 / Hybrid / Dense；BM25 发布不要求文档向量，Hybrid 可通过关键词通道召回尚无向量的知识。知识发布到 `production-v1`，只有检索该数据集的运行才能使用；`active` 表示文本索引就绪，Dense 就绪状态单独展示。
-
-Agent 生产图使用同一 PostgreSQL checkpointer：`bootstrap_retrieve → decision ↔ search_cases/search_docs → judge → repair → judge → review`。启动只识别检查点；计算续算需要 reviewer 显式恢复，并核对原配置、版本及累计 active 预算。恢复可能重复当前未完成节点，已持久化成功节点跳过；已有待审核提案与审核重放不调用模型，恢复不发布回复。硬退出耗时未知时，Decision/Judge/Repair 的未完成单模型调用按冻结的 effective timeout（30 秒与原剩余预算的较小值）保守扣减，单独标记 `conservative/estimated`；扣后耗尽直接失败且不调用能力。缺少可靠冻结上限或未完成 bootstrap_retrieve/search_cases/search_docs 复合调用时拒绝续算。扣减先持久化再经恢复 gate 执行；gate 前崩溃复用扣减，进入调用阶段后再次硬退出按新 attempt 扣减。生产与直接 AgentRunner 调用共用一个显式 workflow 拓扑；Workflow 实例只编译一次，模型/资源通过 invocation context 注入，不进入 checkpoint。直接调用计算到 Judge 通过，或步数耗尽时的固定转人工提案，业务入口仍必须持久化 review interrupt。旧审核 checkpoint 可恢复，旧 compute 不执行。阶段记录见 [重构记录](../log/app-docs/agent-durable-refactor.md)。
-
-Cases 与 Docs 分别受 `TICKETMIND_MAX_SEARCH_ROUNDS`、`TICKETMIND_MAX_DOCS_SEARCH_ROUNDS` 限制，共享 `TICKETMIND_MAX_AGENT_STEPS`。首次 Case 检索占一次 Case 配额与一个 step；每次 Decision、工具尝试（含拒绝）和唯一 Repair 消耗 step。重复 query 与额度拒绝返回 Decision，检索成功才消耗对应搜索配额；同一 query 可分别用于 Cases/Docs。步数耗尽生成固定转人工提案并进入审核，跳过 Judge；时间耗尽仍失败。Docs chunk 的正文、版本、hash 与 synthetic 标记保存于运行证据，工作台直接显示该快照。新计算状态版本为 2，旧 compute 不升级，历史等待审核输出仍可审核。
-
-首次 Judge FAIL 后若无 step 执行 Repair，也生成同一固定转人工提案：清除旧候选与旧 Judge 结果，零 Repair 模型/第二 Judge 调用。恢复这种已耗尽 step 的 Decision/Repair 节点时不扣未知模型超时，真实活跃时间耗尽仍失败。
-
-更新代码需要升级数据库。变更细节、使用流程与迁移见[核心代码修改报告](../log/app-docs/core-fixes-2026-09-22.md)；该报告是历史记录，后续验证以[本轮验收记录](../log/app-docs/verification-2026-09-28.md)和[真实路径评估](../log/app-docs/rag-evaluation.md#最新代码的真实路径证据)为准。
-
-阶段 7 的独立版本数据位于 `data/synthetic/phase7_v1/`：8 篇 synthetic Docs、120 条历史 Cases、48 条 test 工单及独立 Agent 复核标签。未切换日常知识库，未测量真实检索或模型效果；生成、审批检查与后续三模式比较准备见[阶段 7 交付报告](../log/app-docs/phase7-data-verification.md)。
-
-## 测试
+只演示界面与审核流程时，仅需 PostgreSQL，运行以下命令；该模式使用模型与检索替身，API 端口为 8010：
 
 ```powershell
-# 默认单元测试及不依赖真实数据库的测试，并保存结果
-uv run --no-sync python scripts/verify_project.py
-
-# 本轮真实 PostgreSQL + 检索/模型替身验证方式
-uv run --no-sync python scripts/verify_project.py --db
-
-# 可选：已有本机 PostgreSQL 与 Milvus 可用时执行集成测试
-uv run --no-sync python scripts/verify_project.py --db --milvus
+uv run --no-sync python scripts/start_local.py --demo
 ```
 
-仓库提供检索、Agent 决策、人工审核、知识同步等层次的测试及历史验收记录。默认测试与带替身的集成测试不能代替真实模型效果评估；具体实验条件和结果见下方文档。
-
-数据库集成测试只在随机 `tm_test_<UUID>` schema 中迁移和写入，并在结束后清理该 schema。Milvus 知识发布测试同时使用带相同 UUID 的独立 Dense/BM25 集合；客户端保护器拒绝对其他集合写入或删除。冻结历史索引对照测试只读共享集合，要求相应历史索引与查询缓存已存在，不能通过清理或重建共享集合来满足测试。上述 pytest 测试均不新增模型或 Embedding 付费调用。
-
-## 技术栈
-
-**Python 3.12 · FastAPI · Pydantic · LangGraph · PostgreSQL · SQLAlchemy / Alembic · Milvus · Streamlit · pytest**
-
-模型选择通过环境配置完成；本仓库提供的 v2 日常启动入口使用 `qwen3.8-flash` 作为 Decision 模型，Semantic Judge 使用本地配置指定的独立模型。
-
-## 文档
-
-- [项目资料索引](docs/README.md)
-- [交付范围与复现入口](docs/internship-handoff.md)
-- [架构、业务状态与 API](docs/architecture.md)
-- [工作台操作与演示](docs/demo-guide.md)
-- [知识存储、入库和索引同步](docs/knowledge-writeback.md)
-- [简历与面试讲解](docs/interview-guide.md)
-- [来源、复用与项目贡献](docs/sources-and-contributions.md)
-- [阶段 7 合成数据说明](data/synthetic/phase7_v1/README.md)
-- [历史验收、测试产物与日志归档](../log/app-docs/INDEX.md)
-
-## 运行范围
-
-项目当前面向本地、单实例、单 Worker 和合成业务数据；保留人工审核，不自动执行客户环境操作。真实客户渠道集成、多实例部署及生产级运维不属于当前交付范围。
-
-# 可选 LangSmith 追踪
-
-默认关闭。需要查看 Agent 决策链时，在本地环境配置 `LANGSMITH_TRACING=true`、
-`LANGSMITH_API_KEY` 和 `LANGSMITH_PROJECT`。追踪记录 run/attempt、检索候选与工具拒绝、
-Decision/Judge 的输入输出、Repair、预算兜底和审核中断/恢复。事件的 metadata 带业务
-`run_id`、`thread_id`、attempt、checkpoint、模型/协议和证据版本，跨进程可按业务 ID 检索。
-工单文本及检索证据会发送到 LangSmith；启用前应确认团队的数据处理要求。代码会遮蔽常见凭据格式，
-但不要在工单中粘贴密钥。异步队列有界，SDK 或网络故障不影响业务结果；进程突然退出或队列满时，
-可能丢失末尾事件。未配置凭据时不会调用 LangSmith。
+演示令牌路径由终端输出。操作步骤见 [演示指南](docs/demo-guide.md)，其他维护资料见 [文档索引](docs/README.md)。

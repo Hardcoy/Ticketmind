@@ -9,7 +9,7 @@
 
 数据仅为同一合成产品、固定12条历史案例上的新输入候选。编写时参考了历史来源和开发错误类型，刻意加入实质前提变化，不能称作跨产品、外部、盲测或生产集。生成后若依据test结果改提示词、分词或检索参数，则该版本test应降为开发诊断，另建未参与调参的新输入。
 
-第二版在查看BM25结果后按来源适用条件修订标签，没有改查询输入、分组或检索参数，也没有依据召回排名或模型输出选择正确标签。仅用于说明已排除原因/主题近似的来源不计相关命中。修订明细见逐例清单。
+第二版在查看BM25结果后按来源适用条件修订标签，没有改查询输入、分组或检索参数，也没有依据召回排名或模型输出选择正确标签。仅用于说明已排除原因/主题近似的来源不计相关命中。复核记录保存在本目录 `label_reviews.jsonl` 与 `development_label_reviews.jsonl`。
 
 validation组：日期语义、CSV分隔符、CSV解码、游标上下文、客户端超时、代理超时。
 
@@ -17,4 +17,4 @@ test组：浏览器缓存、排序字段映射、仪表盘范围、权限核验�
 
 每个输入使用 `input`（含subject/body/channel/requester_role），检索文本统一由评测入口构建；旧数据仍用原request/query格式。所有样本均显式标为synthetic。标签动作取值与Agent协议一致：`propose_resolution`、`ask_clarification`、`escalate`。
 
-规则与审核入口：[合成业务规则](../../../docs/synthetic-business-rules.md)、[逐例审阅清单](../../../docs/m4-label-review.md)。
+规则与审核入口：[合成业务规则](../../../docs/synthetic-business-rules.md)、[标签复核记录](label_reviews.jsonl)、[开发标签复核](development_label_reviews.jsonl)。
