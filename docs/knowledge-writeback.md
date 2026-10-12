@@ -22,7 +22,7 @@ uv run --no-sync python scripts/knowledge.py reconcile --dataset $dataset
 
 BM25 不要求文档向量；`active` 表示文本索引就绪，Dense 就绪单独记录。缺向量时默认不调用 Embedding，Dense 保持未就绪。使用 Dense 需准备匹配当前 provider / region / workspace / model / dimension / 正文的向量缓存并同步；Hybrid 可通过关键词通道召回无向量知识。查询向量在真实 Dense / Hybrid 运行中仍可能调用 Embedding。
 
-生产知识使用独立 `production-v1`。选择它时在 `.env` 设置 `TICKETMIND_KNOWLEDGE_DATASET=production-v1` 并重启服务；固定 v2 启动器会覆盖该选择，须改用 `scripts/start_local.py`。
+生产知识使用独立 `production-v1`。选择它时在 `.env` 设置 `TICKETMIND_KNOWLEDGE_DATASET=production-v1` 并重启服务；兼容启动器 `start_v2_flash.cmd` 现在固定最终评测的 Phase 7 配置并会覆盖该选择，须改用 `scripts/start_local.py`。
 
 ## 人工发布与索引修复
 

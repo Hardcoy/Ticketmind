@@ -34,8 +34,8 @@ uv run --no-sync python scripts/start_local.py --demo
 
 ## 真实模式的使用边界
 
-已有冻结知识和本机 PG/Milvus 时使用 `start_v2_flash.cmd --skip-infra`；工作台 8501、API 8000。Decision 为 qwen3.8-flash，Judge 读取 `.env` 配置，处理会产生真实费用；执行前确认模型配置与调用额度。
+已有冻结知识和本机 PG/Milvus 时使用 `start_v2_flash.cmd --skip-infra`；旧文件名现在固定 Phase 7 / qwen3.8-flash / deepseek-v4.1-flash / Cases Hybrid Top-5 / Docs BM25。工作台 8501、API 8000；处理会产生真实模型与可能的查询 Embedding 费用，执行前确认配置与调用额度。
 
-新知识发布到 production-v1；日常 v2 启动入口仍检索 synthetic-v2，不会自动看到新发布文章。要演示真实“发布后可检索”，需明确选择 production-v1 的服务配置与已经就绪的索引。真实服务验证需使用独立测试 schema / 集合，见[验证指南](verification.md)。
+新知识发布到 production-v1；日常 Phase 7 入口检索冻结案例数据集，不会自动看到新发布文章。要演示真实“发布后可检索”，需在 `.env` 明确选择 production-v1 并用 `scripts/start_local.py` 启动，以及准备对应索引。真实服务验证需使用独立测试 schema / 集合，见[验证指南](verification.md)。
 
 演示出现问题时：先确认页面是否仍是演示模式、当前角色和工单状态；查看运行错误与历史记录。未修复时展示保存的证据，明确说是历史实测，不把录像或替身当作本次现场模型执行。

@@ -5,7 +5,7 @@
 | 脚本 | 用途与依赖 |
 | --- | --- |
 | [start_local.py](start_local.py) | 通用启动；--demo 为隔离替身模式，真实模式可启动基础设施 |
-| [start_v2_flash.py](start_v2_flash.py) | 固定 synthetic-v2 / qwen3.8-flash / BM25 启动配置 |
+| [start_v2_flash.py](start_v2_flash.py) | 兼容旧命令；固定最终评测的 Phase 7 / Flash / Cases Hybrid Top-5 / Docs BM25 配置 |
 | [serve_m5_demo.py](serve_m5_demo.py) | 隔离演示服务；start_local 调用，不是过期 M5 产物 |
 | [configure_local_auth.py](configure_local_auth.py) | 生成本地身份令牌；保留已有配置 |
 | [knowledge.py](knowledge.py) | seed / 缓存导入 / 索引同步；默认 Embedding 预算为零 |

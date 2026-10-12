@@ -6,15 +6,15 @@ from uuid import uuid4
 
 import pytest
 
-import test_m1_api as m1
+import test_ticket_api as ticket_api
 from ticketmind.agent import runtime
 from ticketmind.agent.review import ReviewWorkflow
 from ticketmind.agent.runtime import AgentRunner, RunFailure
 from ticketmind.core.config import MilvusSettings, ProcessingSettings, QwenSettings
 from ticketmind.db.checkpoints import checkpoint_resources
 
-pytestmark = m1.pytestmark
-database = m1.database
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
 
 
 def snapshot():

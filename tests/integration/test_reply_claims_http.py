@@ -5,16 +5,16 @@ from uuid import UUID, uuid4
 
 import pytest
 
-import test_m1_api as m1
-from test_m2_reviews import review
+import test_ticket_api as ticket_api
+from test_reviews import review
 from ticketmind.agent import decide, runtime, semantic_judge
 from ticketmind.agent.proposals import Escalation
 from ticketmind.core.config import MilvusSettings, ProcessingSettings, QwenSettings
 from ticketmind.tickets.models import ProcessingResult
 
-pytestmark = m1.pytestmark
-database = m1.database
-setup = m1.setup
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
+setup = ticket_api.setup
 
 BAD = Escalation(next_step="escalate", reason="需要人工核查", reply="届时会由人工确认恢复范围")
 GOOD = Escalation(next_step="escalate", reason="需要核查", reply="建议人工核查")
@@ -64,8 +64,8 @@ def test_semantic_guardrail_http_persistence(setup, monkeypatch, entry, outcome)
         judge_fn=(lambda *args: next_judgment()) if entry == "injected_decision" else None,
         milvus_factory=lambda _: local_client, corpus=synthetic.corpus, docs_store=FakeDocStore(),
     )
-    ticket, key = m1.create(client), uuid4().hex
-    response = m1.run(client, ticket, key=key)
+    ticket, key = ticket_api.create(client), uuid4().hex
+    response = ticket_api.run(client, ticket, key=key)
     result = response.json()
     success = outcome in ("pass", "repair")
     assert response.status_code == 201, result
@@ -73,7 +73,7 @@ def test_semantic_guardrail_http_persistence(setup, monkeypatch, entry, outcome)
         result["error_code"], result["error_summary"], len(decisions), len(judgments))
     assert result["published_message_id"] is None
     assert "synthetic-secret" not in response.text
-    assert m1.run(client, ticket, key=key).json() == result
+    assert ticket_api.run(client, ticket, key=key).json() == result
     assert len(decisions) == len(judgments) == (2 if outcome in ("repair", "reject_twice") else 1)
     assert local_client.closed
     current = client.get(f'/tickets/{ticket["id"]}').json()

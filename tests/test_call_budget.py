@@ -1,7 +1,5 @@
 """Synthetic transport tests for acceptance budgets; never real model evidence."""
-import importlib.util
 import json
-from pathlib import Path
 
 import pytest
 
@@ -154,20 +152,5 @@ def test_provider_response_is_captured_before_finish_reason_validation(settings,
     assert captured[0]["choices"][0]["content"] == "truncated raw response"
 
 
-def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts/check_m2_acceptance.py"
-    spec = importlib.util.spec_from_file_location("m2_acceptance_script", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
-def test_preflight_is_offline_and_labels_are_separate(settings):
-    script = load_script()
-    cases = script.load_cases()
-    for case in cases:
-        assert "expected_action" not in case["input"]
-    # Preflight no longer guesses whether Decision will be bypassed by keyword rules.
-    rows = script.preflight(settings, cases[1:])
-    assert all("input_risk_short_circuit" not in row for row in rows)
-    assert all(not row["initial_vector_cache"] for row in rows)

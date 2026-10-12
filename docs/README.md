@@ -10,8 +10,7 @@
 | [脚本索引](../scripts/README.md) | 当前入口、历史回归脚本及外部服务依赖 |
 | [数据索引](../data/README.md) | 运行数据、评测数据与历史夹具的用途 |
 | [来源与贡献](sources-and-contributions.md) | 基线与上游依赖说明 |
-| [合成业务规则](synthetic-business-rules.md) | 旧合成场景判定边界 |
-| [Phase 7 数据契约](phase7-data-contract.md) | 冻结数据与标签约束 |
+| [当前版本测试](../tests/README.md) | 当前功能回归、测试范围与执行条件 |
 
 产品文档在 `data/synthetic/docs/` 与 `data/synthetic/phase7_v1/docs/`，只用于导入；工程文档不放入产品知识库。
 

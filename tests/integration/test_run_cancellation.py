@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-import test_m1_api as m1
+import test_ticket_api as ticket_api
 from test_agent_recovery_postgres import AUTH, Capabilities, recover
 from ticketmind.agent import runtime
 from ticketmind.api.schemas.runs import RunCreate
@@ -17,8 +17,8 @@ from ticketmind.tickets.models import ProcessingResult, Ticket, TicketMessage
 from ticketmind.tickets.processing import create_run
 from ticketmind.tickets.reviews import recover_interrupted_runs
 
-pytestmark = m1.pytestmark
-database = m1.database
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
 
 
 def cancel(client, ticket, run, *, key=None, reason="无法恢复，转为人工处理", version=None, reviewer=True):
@@ -43,7 +43,7 @@ def test_hard_exit_cancel_unlocks_manual_handling_and_never_reexecutes(database,
     app = create_app(session_factory=factory, runner=runner, auth_settings=AUTH)
     with TestClient(app) as client:
         client.headers["Authorization"] = "Bearer " + "o" * 32
-        ticket = m1.create(client)
+        ticket = ticket_api.create(client)
         with pytest.raises(Crash):
             create_run(factory, lambda: runner, UUID(ticket["id"]), RunCreate(expected_version=1,
                 trigger_message_id=ticket["messages"][0]["id"]), "operator", uuid4().hex,
@@ -94,22 +94,22 @@ def test_cancellation_refuses_live_compute_recovery_and_review(database, monkeyp
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client.headers["Authorization"] = "Bearer " + "o" * 32
-        ticket = m1.create(client)
+        ticket = ticket_api.create(client)
         entered, release = Event(), Event()
         def blocked():
             entered.set()
             assert release.wait(10)
         if activity == "compute":
             caps.callback = blocked
-            work = lambda: m1.run(client, ticket)
+            work = lambda: ticket_api.run(client, ticket)
         elif activity == "recovery":
-            run = m1.run(client, ticket).json()
+            run = ticket_api.run(client, ticket).json()
             caps.callback = blocked
             work = lambda: recover(client, ticket, run)
         else:
             # Skip the initial synthetic failure to reach waiting_review.
             caps.calls["decision"] = 1
-            run = m1.run(client, ticket).json()
+            run = ticket_api.run(client, ticket).json()
             original_resume = client.app.state.workflow.resume
             def resume(*args):
                 blocked()
@@ -140,8 +140,8 @@ def test_cancel_permissions_version_rollback_and_cross_run_idempotency(database,
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client.headers["Authorization"] = "Bearer " + "o" * 32
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         with factory() as session, session.begin():
             session.get(ProcessingResult, UUID(run["id"])).run_status = RunStatus.RUNNING
         assert cancel(client, ticket, run, reviewer=False).status_code == 403
@@ -167,13 +167,13 @@ def test_cancel_permissions_version_rollback_and_cross_run_idempotency(database,
         # Cancelled checkpoint remains cancelled even when the original key is replayed.
         assert cancel(client, ticket, run).json()["error_code"] == "version_conflict"
         assert cancel(client, current, run).json()["error_code"] == "run_not_cancellable"
-        assert m1.run(client, current).json()["error_code"] == "customer_trigger_required"
+        assert ticket_api.run(client, current).json()["error_code"] == "customer_trigger_required"
         response = client.post(f'/tickets/{ticket["id"]}/messages', json={
             "kind": "customer_update", "body": "新客户事实", "expected_version": 2},
             headers={"Idempotency-Key": uuid4().hex})
         assert response.status_code == 201
         new_ticket = client.get(f'/tickets/{ticket["id"]}').json()
-        another = m1.run(client, new_ticket).json()
+        another = ticket_api.run(client, new_ticket).json()
         assert cancel(client, ticket, another, key=key).json()["error_code"] == "idempotency_conflict"
 
 
@@ -183,8 +183,8 @@ def test_cancel_does_not_change_other_lifecycle_states(database, monkeypatch, st
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client.headers["Authorization"] = "Bearer " + "o" * 32
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         with factory() as session, session.begin():
             saved = session.get(ProcessingResult, UUID(run["id"]))
             saved.run_status = state
@@ -201,8 +201,8 @@ def test_cancel_does_not_require_checkpoint_or_agent_configuration(database, mon
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client.headers["Authorization"] = "Bearer " + "o" * 32
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         with factory() as session, session.begin():
             session.get(ProcessingResult, UUID(run["id"])).run_status = RunStatus.RUNNING
         client.app.state.workflow = None

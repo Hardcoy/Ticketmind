@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
-import test_m1_api as m1
+import test_ticket_api as ticket_api
 from ticketmind.agent.proposals import proposal_adapter
 from ticketmind.api.schemas.runs import review_create_adapter
 from ticketmind.core.config import AuthSettings
@@ -17,9 +17,9 @@ from ticketmind.tickets.enums import ProcessingRunStatus as RunStatus
 from ticketmind.tickets.models import ProcessingResult, ProcessingReview, Ticket, TicketMessage
 from ticketmind.tickets.processing import request_hash
 
-pytestmark = m1.pytestmark
-database = m1.database
-setup = m1.setup
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
+setup = ticket_api.setup
 
 
 def reviewer_headers(client, key=None):
@@ -46,17 +46,17 @@ def test_review_paths_preserve_original_and_apply_once(setup, proposal, decision
         "next_step": proposal,
         "reason": "synthetic reason",
         "reply": "原始草稿",
-        "evidence_ids": ["SYN-HIST-V2-007"],
+        "evidence_ids": ["SYN-P7-CASE-001"],
     }
     if proposal == "ask_clarification":
         proposal_data["reply"] = "当前配置是什么？"
     if proposal == "propose_resolution":
         proposal_data["evidence_quotes"] = {
-            "SYN-HIST-V2-007": runner.corpus.cases["SYN-HIST-V2-007"].resolution.summary
+            "SYN-P7-CASE-001": runner.corpus.cases["SYN-P7-CASE-001"].resolution.summary
         }
     runner.proposal_override = proposal_adapter.validate_python(proposal_data)
-    ticket = m1.create(client)
-    run = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    run = ticket_api.run(client, ticket).json()
     key = uuid4().hex
     changes = {"edited_reply": "人工修改后的建议", "comment": "核对适用环境",
                "final_action": "resolve"} if decision == "edit" else (
@@ -91,8 +91,8 @@ def test_review_paths_preserve_original_and_apply_once(setup, proposal, decision
 
 def test_operator_cannot_review_reply_or_close_and_extra_fields_rejected(setup):
     client, _, _ = setup
-    ticket = m1.create(client, requester_role="reviewer")
-    run = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client, requester_role="reviewer")
+    run = ticket_api.run(client, ticket).json()
     headers = {"Idempotency-Key": uuid4().hex}
     for path, payload in [
         (f'/tickets/{ticket["id"]}/runs/{run["id"]}/review', {"decision": "approve", "expected_version": 1}),
@@ -103,14 +103,14 @@ def test_operator_cannot_review_reply_or_close_and_extra_fields_rejected(setup):
     assert review(client, ticket, run, decision="escalate").status_code == 422
     assert review(client, ticket, run, thread_id="client-controlled").status_code == 422
     assert review(client, ticket, run, expected_version=2).status_code == 409
-    other = m1.create(client)
+    other = ticket_api.create(client)
     assert review(client, other, run).status_code == 404
 
 
 def test_customer_update_cancels_old_plan_and_replay_precedes_version(setup):
     client, runner, _ = setup
-    ticket = m1.create(client)
-    old_run = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    old_run = ticket_api.run(client, ticket).json()
     key = uuid4().hex
     added = message(client, ticket, key=key)
     assert added.status_code == 201
@@ -119,35 +119,35 @@ def test_customer_update_cancels_old_plan_and_replay_precedes_version(setup):
     assert review(client, ticket, old_run).status_code == 409
     assert client.get(f'/tickets/{ticket["id"]}/runs/{old_run["id"]}').json()["run_status"] == "cancelled"
     current = client.get(f'/tickets/{ticket["id"]}').json()
-    new_run = m1.run(client, current).json()
+    new_run = ticket_api.run(client, current).json()
     assert new_run["run_status"] == "waiting_review" and new_run["thread_id"] != old_run["thread_id"]
     assert any("客户补充" in message.content for message in runner.inputs[-1].messages if message.role == "customer")
 
 
 def test_clarification_rounds_use_only_applied_non_escalated_reviews(setup):
     client, runner, _ = setup
-    ticket = m1.create(client)
+    ticket = ticket_api.create(client)
     for round_number in range(2):
-        result = m1.run(client, ticket).json()
+        result = ticket_api.run(client, ticket).json()
         assert runner.clarification_rounds[-1] == round_number
         assert review(client, ticket, result).json()["run_status"] == "completed"
         awaiting = client.get(f'/tickets/{ticket["id"]}').json()
-        assert m1.run(client, awaiting).status_code == 409
+        assert ticket_api.run(client, awaiting).status_code == 409
         assert message(client, awaiting).status_code == 201
         ticket = client.get(f'/tickets/{ticket["id"]}').json()
-    m1.run(client, ticket)
+    ticket_api.run(client, ticket)
     assert runner.clarification_rounds[-1] == 2
 
 
 def test_escalated_ticket_accepts_human_reply_and_close_but_no_agent(setup):
     client, _, _ = setup
-    ticket = m1.create(client)
-    result = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    result = ticket_api.run(client, ticket).json()
     assert review(client, ticket, result, decision="escalate", comment="人工介入").json()["run_status"] == "completed"
     ticket = client.get(f'/tickets/{ticket["id"]}').json()
     assert message(client, ticket).status_code == 201
     ticket = client.get(f'/tickets/{ticket["id"]}').json()
-    assert ticket["status"] == "escalated" and m1.run(client, ticket).status_code == 409
+    assert ticket["status"] == "escalated" and ticket_api.run(client, ticket).status_code == 409
     response = client.post(f'/tickets/{ticket["id"]}/messages', json={"kind": "human_reply", "body": "已人工核查",
         "expected_version": ticket["version"]}, headers=reviewer_headers(client))
     assert response.status_code == 201
@@ -158,8 +158,8 @@ def test_escalated_ticket_accepts_human_reply_and_close_but_no_agent(setup):
 
 def test_application_failure_rolls_back_and_retries_finished_graph(setup, monkeypatch):
     client, runner, factory = setup
-    ticket = m1.create(client)
-    result = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    result = ticket_api.run(client, ticket).json()
     append = reviews.append_message
     def fail_after_flush(*args, **kwargs):
         append(*args, **kwargs)
@@ -170,7 +170,7 @@ def test_application_failure_rolls_back_and_retries_finished_graph(setup, monkey
     assert failed["run_status"] == "failed" and failed["review"]["applied_at"] is None
     current = client.get(f'/tickets/{ticket["id"]}').json()
     assert current["version"] == 1 and len(current["messages"]) == 1
-    assert m1.run(client, ticket).status_code == 409
+    assert ticket_api.run(client, ticket).status_code == 409
     state = client.app.state.workflow.graph().get_state(client.app.state.workflow.config(result["thread_id"]))
     assert state.next == () and state.values["approved_review"]
     monkeypatch.setattr(reviews, "append_message", append)
@@ -181,8 +181,8 @@ def test_application_failure_rolls_back_and_retries_finished_graph(setup, monkey
 
 def test_new_message_invalidates_failed_saved_review(setup, monkeypatch):
     client, _, _ = setup
-    ticket = m1.create(client)
-    result = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    result = ticket_api.run(client, ticket).json()
     def fail(*args):
         raise RuntimeError("simulated checkpoint failure")
     monkeypatch.setattr(client.app.state.workflow, "resume", fail)
@@ -195,8 +195,8 @@ def test_new_message_invalidates_failed_saved_review(setup, monkeypatch):
 
 def test_concurrent_review_is_claimed_once_and_blocks_ticket_writes(setup, monkeypatch):
     client, runner, _ = setup
-    ticket = m1.create(client)
-    result = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    result = ticket_api.run(client, ticket).json()
     entered, release = Event(), Event()
     original = client.app.state.workflow.resume
     def blocked(*args):
@@ -212,7 +212,7 @@ def test_concurrent_review_is_claimed_once_and_blocks_ticket_writes(setup, monke
             assert review(client, ticket, result, key=key).json()["run_status"] == "running"
             assert review(client, ticket, result).status_code == 409
             assert message(client, ticket).status_code == 409
-            assert m1.run(client, ticket).status_code == 409
+            assert ticket_api.run(client, ticket).status_code == 409
         finally:
             release.set()
         assert pending.result().json()["run_status"] == "completed"
@@ -225,12 +225,12 @@ def test_concurrent_review_is_claimed_once_and_blocks_ticket_writes(setup, monke
 def test_fresh_app_restores_checkpoints_and_identifies_interruption(database, phase):
     _, factory, _ = database
     auth = AuthSettings(_env_file=None, operator_token="o" * 32, reviewer_token="r" * 32)
-    runner = m1.SyntheticRunner(factory)
+    runner = ticket_api.SyntheticRunner(factory)
     key, payload = uuid4().hex, review_create_adapter.validate_python({"decision": "approve", "expected_version": 1})
     with TestClient(create_app(session_factory=factory, runner=runner, auth_settings=auth)) as client:
         client.headers["Authorization"] = "Bearer " + "o" * 32
-        ticket = m1.create(client)
-        result = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        result = ticket_api.run(client, ticket).json()
         if phase != "waiting":
             with factory() as session, session.begin():
                 saved_run = session.get(ProcessingResult, UUID(result["id"]))

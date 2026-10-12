@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-import test_m1_api as m1
+import test_ticket_api as ticket_api
 from ticketmind.agent import runtime
 from ticketmind.agent.runtime import AgentRunner
 from ticketmind.api.schemas.runs import RunRecover
@@ -22,8 +22,8 @@ from ticketmind.tickets.enums import ProcessingRunStatus as RunStatus
 from ticketmind.tickets.models import ProcessingRecovery, ProcessingResult, Ticket
 from ticketmind.tickets.recovery import recover_run
 
-pytestmark = m1.pytestmark
-database = m1.database
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
 AUTH = AuthSettings(_env_file=None, operator_token="o" * 32, reviewer_token="r" * 32)
 
 
@@ -99,8 +99,8 @@ def test_explicit_api_recovery_skips_committed_nodes_and_review_is_exactly_once(
     caps = Capabilities(factory, monkeypatch, tool=tool)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         assert run["run_status"] == "failed"
     calls = dict(caps.calls)
     # Simulate business-save crash: startup must classify without capabilities.
@@ -112,7 +112,7 @@ def test_explicit_api_recovery_skips_committed_nodes_and_review_is_exactly_once(
         assert caps.calls == calls
         pending = client.get(f'/tickets/{ticket["id"]}/runs/{run["id"]}').json()
         assert pending["run_status"] == "running" and pending["error_code"] == "explicit_recovery_required"
-        assert m1.run(client, ticket).status_code == 409
+        assert ticket_api.run(client, ticket).status_code == 409
         key = uuid4().hex
         result = recover(client, ticket, run, key)
         assert result.status_code == 200, result.text
@@ -143,8 +143,8 @@ def test_known_failed_budget_survives_offline_and_connection_is_released(databas
     caps = Capabilities(factory, monkeypatch, slow=True)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         assert run["usage"]["execution_budget"]["observed_elapsed_seconds"] == 82
         caps.now += 10000
         def verify_unlocked():
@@ -169,8 +169,8 @@ def test_fatal_checkpoint_survives_business_save_crash_without_capabilities(data
     caps = Capabilities(factory, monkeypatch, failure=failure)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         checkpoint = client.app.state.workflow.graph().get_state(client.app.state.workflow.config(run["thread_id"]))
         assert checkpoint.next == () and checkpoint.values["failure_descriptor"]["fatal"] is True
     count = dict(caps.calls)
@@ -191,8 +191,8 @@ def test_frozen_config_drift_refuses_before_capability(database, monkeypatch, dr
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         count = dict(caps.calls)
         changed = {"decision_model": "another-model", "retrieval_rrf_k": 61,
                    "max_agent_steps": 7, "knowledge_dataset": "another-dataset"}[drift]
@@ -212,8 +212,8 @@ def test_live_recovery_concurrent_and_version_change_cannot_publish(database, mo
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         entered, release = Event(), Event()
         def blocked():
             entered.set()
@@ -242,8 +242,8 @@ def test_claim_crash_same_key_can_resume(database, monkeypatch):
         pass
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         workflow = client.app.state.workflow
         original = workflow.continue_compute
         monkeypatch.setattr(workflow, "continue_compute", lambda *args, **kwargs: (_ for _ in ()).throw(Crash()))
@@ -269,8 +269,8 @@ def test_invalid_checkpoint_refuses_capabilities(database, monkeypatch, damage):
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         workflow = client.app.state.workflow
         graph, config = workflow.graph(), workflow.config(run["thread_id"])
         values = graph.get_state(config).values
@@ -352,7 +352,7 @@ def test_program_budget_fallback_recovery_and_output_save_crash(database, monkey
     monkeypatch.setattr(runtime.AgentExecution, "run_node", interrupted)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
+        ticket = ticket_api.create(client)
         from ticketmind.api.schemas.runs import RunCreate
         from ticketmind.tickets.processing import create_run
         with pytest.raises(Crash):
@@ -420,8 +420,8 @@ def test_unknown_model_timeout_charge_durable_and_attempt_identity(database, mon
     key = uuid4().hex
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         discard_observation(client, factory, run)
         workflow = client.app.state.workflow
         original = workflow._invoke
@@ -462,8 +462,8 @@ def test_conservative_or_already_exhausted_budget_stops_all_capabilities(databas
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         discard_observation(client, factory, run)
         graph = client.app.state.workflow.graph()
         config = client.app.state.workflow.config(run["thread_id"])
@@ -488,8 +488,8 @@ def test_estimated_then_observed_failure_remains_separate(database, monkeypatch)
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         discard_observation(client, factory, run)
         def failed_attempt():
             caps.now += 2
@@ -517,8 +517,8 @@ def test_budget_terminal_survives_business_save_crash(database, monkeypatch, res
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         discard_observation(client, factory, run)
         workflow = client.app.state.workflow
         graph, config = workflow.graph(), workflow.config(run["thread_id"])
@@ -565,8 +565,8 @@ def test_diagnostic_write_failure_uses_matching_business_observation(database, m
     monkeypatch.setattr(ReviewWorkflow, "graph", graph_without_diagnostic)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         assert run["usage"]["execution_budget"]["observed_elapsed_seconds"] == 82
         monkeypatch.setattr(ReviewWorkflow, "graph", original)
         workflow = client.app.state.workflow
@@ -583,9 +583,9 @@ def test_second_active_run_refuses_recovery_before_capabilities(database, monkey
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        old = m1.run(client, ticket).json()
-        active = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        old = ticket_api.run(client, ticket).json()
+        active = ticket_api.run(client, ticket).json()
         assert active["run_status"] == "waiting_review"
         calls = dict(caps.calls)
         response = recover(client, ticket, old)
@@ -599,10 +599,10 @@ def test_unknown_compound_call_refuses_without_capability(database, monkeypatch,
     caps = Capabilities(factory, monkeypatch)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
+        ticket = ticket_api.create(client)
         if node == "bootstrap_retrieve":
             monkeypatch.setattr(runtime, "retrieve_cases", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("interrupted retrieval")))
-        run = m1.run(client, ticket).json()
+        run = ticket_api.run(client, ticket).json()
         workflow = client.app.state.workflow
         graph, config = workflow.graph(), workflow.config(run["thread_id"])
         if node != "bootstrap_retrieve":
@@ -634,8 +634,8 @@ def test_unknown_judge_and_repair_restore_original_node(database, monkeypatch, n
         return original(self, current)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         if node == "repair":
             # Reject only the first candidate; final-only repair then passes.
             caps.judge = lambda *args: {"violations": [{"type": "repeated_known_fact", "text": "代理配置", "reason": "test rejection"}]}
@@ -673,8 +673,8 @@ def test_multiple_known_initial_failures_accumulate_active_time_and_attempt_diag
     caps.calls["decision"] = 1  # this test fails only in retrieval
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         assert run["usage"]["execution_budget"]["observed_elapsed_seconds"] == 2
         caps.now += 10000
         failed = recover(client, ticket, run)
@@ -708,8 +708,8 @@ def test_fatal_retrieval_configuration_protocol_and_wrapped_auth(database, monke
     monkeypatch.setattr(runtime, "retrieve_cases", failure)
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         checkpoint = client.app.state.workflow.graph().get_state(client.app.state.workflow.config(run["thread_id"]))
         assert checkpoint.next == () and checkpoint.values["failure_descriptor"]["fatal"]
         assert recover(client, ticket, run).json()["error_code"] == "agent_fatal_failure"
@@ -737,8 +737,8 @@ def test_real_legacy_topology_checkpoint_compatibility(database, monkeypatch, bo
         return {"approved_review": interrupt({"run_id": state["snapshot"]["run_id"], "proposal": state["output"]["state"]["proposal"]})}
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         saver = client.app.state.workflow.checkpointer
         saver.delete_thread(run["thread_id"])
         with factory() as session, session.begin():
@@ -785,8 +785,8 @@ def test_docs_frozen_contract_drift_refuses_before_capabilities(database, monkey
     caps = Capabilities(factory, monkeypatch, tool="search_docs")
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         assert run["run_status"] == "failed"
         frozen = run["models"]["docs"]
         assert frozen["docs_version"] == caps.config.docs_dataset
@@ -815,8 +815,8 @@ def test_docs_reference_snapshot_survives_recovery_review_and_replay(database, m
     caps.decision = decide
     with TestClient(caps.app()) as client:
         client_login(client)
-        ticket = m1.create(client)
-        run = m1.run(client, ticket).json()
+        ticket = ticket_api.create(client)
+        run = ticket_api.run(client, ticket).json()
         assert run["run_status"] == "failed"
         result = recover(client, ticket, run).json()
         assert result["run_status"] == "waiting_review"

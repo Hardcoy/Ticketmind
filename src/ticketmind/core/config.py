@@ -79,7 +79,7 @@ class ProcessingSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8",
                                       env_prefix="TICKETMIND_", extra="ignore")
     agent_version: str = "ticketmind-tools-docs-v2"
-    decision_model: str = Field(default="glm-5.3", min_length=1)
+    decision_model: str = Field(default="qwen3.8-flash", min_length=1)
     judge_model: str = Field(default="deepseek-v4.1-flash", min_length=1)
 
     @model_validator(mode="after")
@@ -92,8 +92,8 @@ class ProcessingSettings(BaseSettings):
         if canonical(self.decision_model) == canonical(self.judge_model):
             raise ValueError("Semantic Judge 必须与 Decision 使用不同模型")
         return self
-    retrieval_mode: Literal["dense", "bm25", "hybrid"] = "dense"
-    retrieval_top_k: int = Field(default=3, ge=1, le=100)
+    retrieval_mode: Literal["dense", "bm25", "hybrid"] = "hybrid"
+    retrieval_top_k: int = Field(default=5, ge=1, le=100)
     retrieval_candidate_k: int = Field(default=20, ge=1, le=100)
     retrieval_rrf_k: int = Field(default=60, ge=1, le=1000)
     processing_timeout_seconds: float = Field(default=90, gt=0, le=300)
@@ -101,7 +101,7 @@ class ProcessingSettings(BaseSettings):
     max_docs_search_rounds: int = Field(default=2, ge=0, le=2)
     max_agent_steps: int = Field(default=8, ge=3, le=8)
     max_clarification_rounds: int = Field(default=2, ge=0, le=2)
-    corpus_path: Path = Path(__file__).resolve().parents[3] / "data/synthetic/v2/historical_cases.jsonl"
-    knowledge_dataset: str = Field(default="production-v1", min_length=1, max_length=128)
-    docs_dataset: str = Field(default="synthetic-product-docs-v1", min_length=1, max_length=128)
+    corpus_path: Path = Path(__file__).resolve().parents[3] / "data/synthetic/phase7_v1/historical_cases.jsonl"
+    knowledge_dataset: str = Field(default="synthetic-v2-9c0552c76c338a73e05990c3c0d7a588149d7b8471a3b0c9a8a648b8d06b488a", min_length=1, max_length=128)
+    docs_dataset: str = Field(default="synthetic-phase7-docs-v1", min_length=1, max_length=128)
     docs_retrieval_mode: Literal["dense", "bm25", "hybrid"] = "bm25"

@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from test_m1_api import create, database, pytestmark, run, setup
+from test_ticket_api import create, database, pytestmark, run, setup
 from ticketmind.agent.proposals import decision_adapter
 from ticketmind.agent.runtime import RunFailure
 from ticketmind.tickets.models import ProcessingResult

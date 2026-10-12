@@ -3,7 +3,7 @@ import hashlib
 from ticketmind.retrieval.schemas import DocEvidenceHit
 
 
-def doc_hit(text="product documentation", *, chunk="product:001:001", version="synthetic-product-docs-v1"):
+def doc_hit(text="product documentation", *, chunk="product:001:001", version="synthetic-phase7-docs-v1"):
     return DocEvidenceHit(source_id="docs:" + chunk, doc_id="product", chunk_id=chunk,
         title="Synthetic Product", section="Configuration", text=text, score=1.0,
         docs_version=version, content_hash=hashlib.sha256(text.encode()).hexdigest(),
@@ -11,7 +11,7 @@ def doc_hit(text="product documentation", *, chunk="product:001:001", version="s
 
 
 class FakeDocStore:
-    def __init__(self, version="synthetic-product-docs-v1"):
+    def __init__(self, version="synthetic-phase7-docs-v1"):
         self.version = version
         self.catalog_hash = "frozen-docs-catalog"
     def metadata(self):

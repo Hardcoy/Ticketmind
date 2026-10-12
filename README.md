@@ -21,8 +21,9 @@ if (-not (Test-Path .env)) { Copy-Item env.example .env }
 | `TICKETMIND_DECISION_MODEL` | 示例为 `qwen3.8-flash` |
 | `TICKETMIND_JUDGE_MODEL` | 配置独立审核模型；示例为 `deepseek-v4.1-flash` |
 | `TICKETMIND_MILVUS_URI` | 本地为 `http://127.0.0.1:19530` |
-| `TICKETMIND_RETRIEVAL_MODE` | 首次使用 `bm25`；不需要文档向量缓存 |
-| `TICKETMIND_DOCS_DATASET` | `synthetic-product-docs-v1` |
+| `TICKETMIND_RETRIEVAL_MODE` | `hybrid`；Cases 使用 Dense + BM25，Top-K=5 |
+| `TICKETMIND_RETRIEVAL_TOP_K` | `5`；candidate_k=20、RRF k=60 |
+| `TICKETMIND_DOCS_DATASET` | `synthetic-phase7-docs-v1` |
 | `TICKETMIND_DOCS_RETRIEVAL_MODE` | `bm25` |
 | `TICKETMIND_AGENT_VERSION` | `ticketmind-tools-docs-v2` |
 
@@ -53,16 +54,16 @@ uv run --no-sync alembic upgrade head
 
 ## 3. 初始化示例知识库
 
-以下使用仓库的 `synthetic-v2` 合成案例与两篇合成产品文档，不调用模型或 Embedding：
+默认使用最后一次完整评测的 Phase 7 数据：120 条合成案例、8 篇产品文档。`.env` 中设置 `TICKETMIND_CORPUS_PATH=data/synthetic/phase7_v1/historical_cases.jsonl` 后执行以下命令，不调用模型或 Embedding：
 
 ```powershell
 uv run --no-sync python scripts/knowledge.py seed
-$dataset = 'synthetic-v2-e5b5a59a7e1481ad3b095d518772354155d891e51ad2a367cf5f7be26540228f'
-uv run --no-sync python scripts/knowledge.py reconcile --dataset $dataset
-uv run --no-sync python -m ticketmind.documents.cli data/synthetic/docs --version synthetic-product-docs-v1
+$dataset = 'synthetic-v2-9c0552c76c338a73e05990c3c0d7a588149d7b8471a3b0c9a8a648b8d06b488a'
+uv run --no-sync python scripts/knowledge.py reconcile --dataset $dataset --limit 120
+uv run --no-sync python -m ticketmind.documents.cli data/synthetic/phase7_v1/docs --version synthetic-phase7-docs-v1
 ```
 
-在 `.env` 设置 `TICKETMIND_KNOWLEDGE_DATASET` 为上述 `$dataset` 的完整值。确认案例状态为 `active`、Docs 索引就绪后再启动。Dense / Hybrid 配置及知识发布见 [知识库配置](docs/knowledge-writeback.md)。
+在 `.env` 设置 `TICKETMIND_KNOWLEDGE_DATASET` 为上述 `$dataset` 的完整值。只有源数据时，上述命令先准备 BM25；完整 Hybrid 还要求同模型、空间和正文的文档向量缓存就绪，缺缓存不会自动付费生成。未准备向量时先设 `TICKETMIND_RETRIEVAL_MODE=bm25`。同步后确认案例 `active`、Dense 就绪及 Docs 索引就绪；详见 [知识库配置](docs/knowledge-writeback.md)。
 
 ## 4. 启动应用
 
@@ -72,13 +73,15 @@ uv run --no-sync python -m ticketmind.documents.cli data/synthetic/docs --versio
 uv run --no-sync python scripts/start_local.py --skip-infra
 ```
 
-也可使用固定 `synthetic-v2 / qwen3.8-flash / bm25` 的入口，Judge 等其余配置仍读取 `.env`：
+也可使用对齐最终评测参数的兼容入口（保留旧文件名，配置已更新为 Phase 7 / Flash / Cases Hybrid / Docs BM25）：
 
 ```powershell
 .\start_v2_flash.cmd --skip-infra
 ```
 
 工作台：[http://127.0.0.1:8501](http://127.0.0.1:8501)；API 文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。从本地 `.env` 读取对应角色令牌登录。`Ctrl+C` 停止 API 和工作台，数据库与索引保留。
+
+真实 Hybrid 处理任意新工单可能调用查询 Embedding；最后一次评测的 48 条固定查询缓存及批次费用额度不自动应用于日常工作台。
 
 只演示界面与审核流程时，仅需 PostgreSQL，运行以下命令；该模式使用模型与检索替身，API 端口为 8010：
 

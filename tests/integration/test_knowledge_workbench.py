@@ -3,8 +3,8 @@ from uuid import uuid4
 
 import pytest
 
-from test_m5_workbench import ui, database, login, create, click, widget
-from test_m1_api import pytestmark
+from test_workbench_http import ui, database, login, create, click, widget
+from test_ticket_api import pytestmark
 from ticketmind.workbench.demo import demo_knowledge_sync
 
 

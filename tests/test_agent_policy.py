@@ -55,7 +55,7 @@ def test_risk_language_does_not_bypass_decision(subject, content, next_step):
 
 
 def execute(decisions, *, changes=None, limits=None, tool_error=False):
-    config = ProcessingSettings(_env_file=None, **(limits or {}))
+    config = ProcessingSettings(_env_file=None, docs_dataset="synthetic-phase7-docs-v1", **(limits or {}))
     corpus = load_sources(config.corpus_path)
     ids = list(corpus.cases)[:3]
     hits = [RetrievalHit(source_id=i, text=build_case_text(corpus.cases[i]), score=0.5) for i in ids]

@@ -36,7 +36,7 @@ class SyntheticRunner:
     def __init__(self, factory):
         self.factory, self.calls, self.inputs, self.clarification_rounds = factory, 0, [], []
         self.corpus = load_sources(ProcessingSettings().corpus_path)
-        self.metadata = {"agent_version": "m1-integration-double", "corpus_version": self.corpus.version,
+        self.metadata = {"agent_version": "ticket-api-integration-double", "corpus_version": self.corpus.version,
                          "retrieval_mode": "dense", "model_config": {"synthetic_test_double": True}}
         self.error = False
         self.entered = self.release = None
@@ -63,7 +63,7 @@ class SyntheticRunner:
             assert self.release.wait(10)
         if self.error:
             raise RuntimeError("synthetic failure; credential must not leak: sk-private-test")
-        case = self.corpus.cases["SYN-HIST-V2-007"]
+        case = self.corpus.cases["SYN-P7-CASE-001"]
         hit = RetrievalHit(source_id=case.source_id, text=build_case_text(case), score=0.5)
         proposal = Clarification(next_step="ask_clarification", reason="缺少必要环境信息",
                                   reply="请补充是否使用本机代理。",
@@ -116,7 +116,7 @@ def test_http_to_run_and_database_are_consistent(setup):
     assert len(detail["messages"]) == 1 and detail["latest_run"]["id"] == result["id"]
     assert client.get(f'/tickets/{ticket["id"]}/runs/{result["id"]}').json() == result
     assert client.get(f'/tickets/{ticket["id"]}/runs').json()[0] == result
-    source = client.get(f'/sources/SYN-HIST-V2-007?corpus_version={result["corpus_version"]}')
+    source = client.get(f'/sources/SYN-P7-CASE-001?corpus_version={result["corpus_version"]}')
     assert source.status_code == 200 and source.json()["source"]["synthetic"] is True
     with factory() as session:
         saved = session.get(ProcessingResult, UUID(result["id"]))
@@ -177,7 +177,7 @@ def test_version_and_trigger_ownership_and_extra_fields(setup):
     assert run(client, first, body="forged", actor_id="reviewer").status_code == 422
     result = run(client, first).json()
     assert client.get(f'/tickets/{second["id"]}/runs/{result["id"]}').status_code == 404
-    assert client.get('/sources/SYN-HIST-V2-007?corpus_version=obsolete').status_code == 404
+    assert client.get('/sources/SYN-P7-CASE-001?corpus_version=obsolete').status_code == 404
     assert runner.calls == 1
 
 
@@ -294,11 +294,11 @@ def test_other_proposals_also_wait_for_review(setup, next_step, action):
         "next_step": next_step,
         "reason": "unit test",
         "reply": "unit draft",
-        "evidence_ids": ["SYN-HIST-V2-007"],
+        "evidence_ids": ["SYN-P7-CASE-001"],
     }
     if next_step == "propose_resolution":
         proposal_data["evidence_quotes"] = {
-            "SYN-HIST-V2-007": runner.corpus.cases["SYN-HIST-V2-007"].resolution.summary
+            "SYN-P7-CASE-001": runner.corpus.cases["SYN-P7-CASE-001"].resolution.summary
         }
     runner.proposal_override = proposal_adapter.validate_python(proposal_data)
     ticket = create(client)

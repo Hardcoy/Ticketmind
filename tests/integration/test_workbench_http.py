@@ -11,14 +11,14 @@ import uvicorn
 from sqlalchemy import func, select
 from streamlit.testing.v1 import AppTest
 
-import test_m1_api as m1
+import test_ticket_api as ticket_api
 from ticketmind.core.config import AuthSettings
 from ticketmind.main import create_app
 from ticketmind.tickets.models import ProcessingReview, Ticket
 from ticketmind.workbench.demo import DemoRunner
 
-pytestmark = m1.pytestmark
-database = m1.database
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
 APP = Path(__file__).resolve().parents[2] / "src/ticketmind/workbench/app.py"
 
 
@@ -275,6 +275,6 @@ def test_ui_docs_chunk_snapshot_has_no_case_source_button(ui, monkeypatch):
     process(at)
     assert any(snapshot["text"] in item.value for item in at.markdown)
     assert any("合成产品文档" in item.value and snapshot["docs_version"] in item.value for item in at.caption)
-    assert any(button.label == "查看来源 SYN-HIST-V2-007" for button in at.button)
+    assert any(button.label == "查看来源 SYN-P7-CASE-001" for button in at.button)
     assert not any(button.label == "查看来源 " + snapshot["source_id"] for button in at.button)
     assert not at.exception

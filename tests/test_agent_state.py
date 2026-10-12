@@ -95,7 +95,7 @@ def test_loop_exports_control_state_and_audit_without_mutating_input(failure):
         return [RetrievalHit(source_id="b", text="second", score=0.6)]
     corpus = SimpleNamespace()
     kwargs = dict(decide=decide, judge=lambda *args: {"violations": []}, corpus=corpus,
-                  config=ProcessingSettings(_env_file=None), remaining=lambda: 1,
+                  config=ProcessingSettings(_env_file=None, docs_dataset="synthetic-phase7-docs-v1"), remaining=lambda: 1,
                   audit=audit, search_fn=search, docs_fn=lambda query, record: [doc_hit()], state_callback=snapshots.append)
     if failure:
         with pytest.raises(RuntimeError, match="synthetic tool"):

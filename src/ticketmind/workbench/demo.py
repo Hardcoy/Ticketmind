@@ -23,7 +23,9 @@ class DemoRunner:
             raise RuntimeError("synthetic demo failure")
         action = "escalate" if "转人工" in subject else (
             "ask_clarification" if "补问" in subject and clarification_rounds == 0 else "propose_resolution")
-        source = self.corpus.cases["SYN-HIST-V2-007"]
+        # The demo uses the selected corpus, including the current Phase 7 profile.
+        # This evidence is illustrative; synthetic routing is not model quality.
+        source = next(iter(self.corpus.cases.values()))
         reply = {"escalate": "建议由人工核查当前环境与权限。", "ask_clarification": "请补充是否启用本机代理及代理类型。",
                  "propose_resolution": "请先核对本机代理类型及当前客户端支持的代理配置，再复测连接。"}[action]
         proposal_data = dict(

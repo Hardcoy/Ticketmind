@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-REM Uses the existing .env; the profile only overrides dataset, Decision model and retrieval mode.
+REM Compatibility entry: Phase 7 evaluation settings; credentials and service addresses come from .env.
 uv run --no-sync python scripts/start_v2_flash.py %*
 set "START_EXIT=%ERRORLEVEL%"
 if not "%START_EXIT%"=="0" (

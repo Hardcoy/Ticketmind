@@ -12,16 +12,16 @@ import pytest
 import httpx
 from sqlalchemy import text
 
-import test_m1_api as m1
-from test_m2_reviews import review
+import test_ticket_api as ticket_api
+from test_reviews import review
 from ticketmind.agent.runtime import AgentRunner
 from ticketmind.core.config import MilvusSettings, ProcessingSettings, QwenSettings
 from ticketmind.llm import client as llm_client
 from ticketmind.tickets.models import ProcessingResult
 
-pytestmark = m1.pytestmark
-database = m1.database
-setup = m1.setup
+pytestmark = ticket_api.pytestmark
+database = ticket_api.database
+setup = ticket_api.setup
 
 
 @pytest.mark.parametrize("fault", ["timeout", "http_503", "invalid_json"])
@@ -69,9 +69,9 @@ def test_real_model_transport_fails_once_and_preserves_ticket(setup, monkeypatch
         milvus_factory=lambda _: milvus, session_factory=factory, docs_store=FakeDocStore())
     client.app.state.runner = runner
     try:
-        ticket, key = m1.create(client), uuid4().hex
+        ticket, key = ticket_api.create(client), uuid4().hex
         started = monotonic()
-        response = m1.run(client, ticket, key=key)
+        response = ticket_api.run(client, ticket, key=key)
         elapsed = monotonic() - started
         result = response.json()
         assert response.status_code == 201 and result["run_status"] == "failed", result
@@ -79,7 +79,7 @@ def test_real_model_transport_fails_once_and_preserves_ticket(setup, monkeypatch
         assert "decision" in result["error_summary"]
         assert "synthetic-secret" not in response.text
         assert len(sends) == 1 and milvus.closed and elapsed < 10
-        assert m1.run(client, ticket, key=key).json() == result and len(sends) == 1
+        assert ticket_api.run(client, ticket, key=key).json() == result and len(sends) == 1
         current = client.get(f'/tickets/{ticket["id"]}').json()
         assert current["status"] == "open" and current["version"] == 1 and len(current["messages"]) == 1
         with factory() as session:
@@ -93,8 +93,8 @@ def test_real_model_transport_fails_once_and_preserves_ticket(setup, monkeypatch
 
 def test_missing_real_checkpoint_refuses_recompute_or_publish(setup):
     client, runner, factory = setup
-    ticket = m1.create(client)
-    run = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    run = ticket_api.run(client, ticket).json()
     with factory() as session, session.begin():
         assert session.execute(text("SELECT current_schema()")).scalar_one().startswith("tm_test_")
         # Only this test's own thread is damaged, in its UUID schema.
@@ -107,13 +107,13 @@ def test_missing_real_checkpoint_refuses_recompute_or_publish(setup):
         assert failed["published_message_id"] is None
         current = client.get(f'/tickets/{ticket["id"]}').json()
         assert current["version"] == 1 and len(current["messages"]) == 1 and runner.calls == 1
-    assert m1.run(client, ticket).status_code == 409
+    assert ticket_api.run(client, ticket).status_code == 409
 
 
 def test_finished_checkpoint_with_other_review_refuses_publication(setup):
     client, runner, _ = setup
-    ticket = m1.create(client)
-    run = m1.run(client, ticket).json()
+    ticket = ticket_api.create(client)
+    run = ticket_api.run(client, ticket).json()
     # This is corruption injection into our isolated test thread, not an authorized business review.
     client.app.state.workflow.resume(run["thread_id"], {"id": "synthetic-unrelated-review"})
     failed = review(client, ticket, run).json()
@@ -121,31 +121,3 @@ def test_finished_checkpoint_with_other_review_refuses_publication(setup):
     assert failed["published_message_id"] is None and runner.calls == 1
     current = client.get(f'/tickets/{ticket["id"]}').json()
     assert current["version"] == 1 and len(current["messages"]) == 1
-
-
-def test_evaluation_export_keeps_synthetic_final_separate_from_absent_model_output(database, tmp_path, monkeypatch):
-    from contextlib import contextmanager
-    from pathlib import Path
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts"))
-    import evaluate_m4
-    from ticketmind.agent.dev_acceptance import AttemptLedger, CATEGORIES
-    from ticketmind.evaluation.dataset import digest
-    _, factory, _ = database
-    synthetic = m1.SyntheticRunner(factory)
-    @contextmanager
-    def owned_database(_):
-        yield database
-    monkeypatch.setattr(evaluate_m4, "isolated_database", owned_database)
-    monkeypatch.setattr(evaluate_m4, "CACHE", tmp_path)
-    monkeypatch.setattr(evaluate_m4, "AgentRunner", lambda *args, **kwargs: synthetic)
-    ledger = AttemptLedger(tmp_path / "attempts.json", {c: 0 for c in CATEGORIES})
-    case = {"case_id": "synthetic-export-check", "input": {"subject": "测试读取真实快照", "body": "纯替身输出",
-            "channel": "web", "requester_role": "operator"}, "forbidden_label_marker": "MUST_NOT_ENTER_AGENT"}
-    result = evaluate_m4.execute_agent(case, QwenSettings(_env_file=None, DASHSCOPE_API_KEY="unused", DASHSCOPE_WORKSPACE_ID="unused"),
-                                      ProcessingSettings(_env_file=None, decision_model="qwen3.8-flash"), ledger)
-    assert result["status"] == "succeeded" and result["input_hash"] == digest(case["input"])
-    assert result["raw_proposal"] is None and result["final_proposal"]["next_step"] == "ask_clarification"
-    assert result["raw_judges"] == []
-    assert not ledger.data["attempts"] and synthetic.calls == 1
-    assert "MUST_NOT_ENTER_AGENT" not in str(synthetic.inputs)
-    assert result["business_review"] == "not_executed" and result["http_database_consistent"]

@@ -4,9 +4,9 @@
 
 | 目录 | 当前用途 |
 | --- | --- |
-| `synthetic/v2` | 默认 seed 和固定 v2 启动器的 12 条历史知识；旧评测基线 |
-| `synthetic/docs` | 日常 Docs 工具的两篇合成产品文档 |
-| `synthetic/phase7_v1` | 8 篇 Docs、120 条 Cases、48 条工单；当前独立评测入口使用的冻结数据、manifest、标签审批与离线报告 |
+| `synthetic/v2` | 旧版 12 条历史知识与评测基线，显式指定时才使用 |
+| `synthetic/docs` | 旧版两篇合成产品文档 |
+| `synthetic/phase7_v1` | 默认启动和最终评测的冻结数据：8 篇 Docs、120 条 Cases、48 条评测工单；含 manifest、标签审批与离线报告 |
 | `synthetic/m3` | 固定查询与诊断夹具；检索评测默认输入、M3 回归与 Phase 7 重复样本检查使用 |
 | `synthetic/m4` | 历史评测回归、开发标签与 hash 复核记录；M4 脚本和 Phase 7 重复样本检查使用 |
 | `synthetic/live_e2e_v1` / `live_e2e_v2` | 历史流程夹具；Phase 7 校验和测试使用，v2 验证器还与 v1 比较 |
@@ -14,4 +14,4 @@
 
 数据构建脚本和复核记录用于重建、内容 hash 审批与防止标签泄漏。`phase7_v1/offline_validation_report.json` 是冻结数据的校验快照，保留在版本内；一次性运行输出写入本地缓存或仓库外日志。
 
-旧数据集保留是为了现有回归可复现，不能把它们当作未接触的盲测集。向量缓存与预算台账可能用于后续重放，不按缓存目录阶段名称清空。初始化见 [配置指南](../README.md)，数据契约见 [Phase 7 契约](../docs/phase7-data-contract.md)。
+旧数据集保留是为了历史实验可复现，不能把它们当作未接触的盲测集。向量缓存与预算台账可能用于后续重放，不按缓存目录阶段名称清空。初始化见 [配置指南](../README.md)，冻结数据说明见 [Phase 7 数据集](synthetic/phase7_v1/README.md)。当前应用回归不执行旧阶段生成、冻结与规则文件校验，见 [测试范围](../tests/README.md)。

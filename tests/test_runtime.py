@@ -22,21 +22,20 @@ def run_input(subject="s", content="b"):
 
 def proposal():
     return Clarification(next_step="ask_clarification", reason="missing information",
-                         reply="unit question", evidence_ids=["SYN-HIST-V2-007"])
+                         reply="unit question", evidence_ids=["SYN-P7-CASE-001"])
 
 
 @pytest.mark.parametrize("failure", [None, "embedding", "decision", "source"])
 def test_real_graph_orchestration_and_partial_failure(monkeypatch, settings, failure):
-    # This unit test exercises the original frozen synthetic fixture, not the
-    # optional live-E2E dataset selected in the developer's shell or .env.
+    # Freeze the current Phase 7 source independently of local .env selection.
     from pathlib import Path
-    fixture_path = Path(__file__).resolve().parents[1] / "data/synthetic/v2/historical_cases.jsonl"
+    fixture_path = Path(__file__).resolve().parents[1] / "data/synthetic/phase7_v1/historical_cases.jsonl"
     config = ProcessingSettings(
         _env_file=None, corpus_path=fixture_path, retrieval_mode="dense",
-        decision_model="glm-5.3", judge_model="deepseek-v4.1-flash",
+        decision_model="qwen3.8-flash", judge_model="deepseek-v4.1-flash",
     )
     corpus = load_sources(config.corpus_path)
-    case = corpus.cases["SYN-HIST-V2-007"]
+    case = corpus.cases["SYN-P7-CASE-001"]
 
     class Client:
         closed = False
@@ -44,13 +43,18 @@ def test_real_graph_orchestration_and_partial_failure(monkeypatch, settings, fai
         def search(self, **kwargs):
             assert kwargs["timeout"] > 0
             return [[{"entity": {"source_id": case.source_id,
-                                  "text": "wrong corpus text" if failure == "source" else build_case_text(case)},
+                                  "text": "wrong corpus text" if failure == "source" else build_case_text(case),
+                                  "corpus_version": corpus.version},
                       "distance": 0.6}]]
 
         def close(self):
             self.closed = True
 
     client = Client()
+    from ticketmind.retrieval import service
+    from ticketmind.retrieval.versioned_collection import collection_for
+    # Collection schema validation is tested separately; this backend only supplies ranked rows.
+    monkeypatch.setattr(service, "validate_collection", lambda *args, **kwargs: collection_for(corpus))
     monkeypatch.setattr(runtime, "build_milvus_client", lambda settings: client)
 
     class Embedding:
@@ -74,7 +78,7 @@ def test_real_graph_orchestration_and_partial_failure(monkeypatch, settings, fai
         with pytest.raises(RunFailure) as error:
             runner(run_input())
         assert "understanding" not in error.value.partial
-        # M3 validates source contents inside retrieval, before any decision is possible.
+        # Source validation happens before any decision is possible.
         assert error.value.stage == {"embedding": "retrieval", "decision": "decision", "source": "retrieval"}[failure]
         if failure == "decision":
             assert error.value.evidence[0]["source_id"] == case.source_id
@@ -92,7 +96,7 @@ def test_decision_cache_is_bound_to_actual_request(tmp_path, settings, monkeypat
     from ticketmind.retrieval.dense import RetrievalHit
     state = {"subject": "s", "messages": [AgentMessage(role="customer", content="b")],
              "clarification_rounds": 0, "tool_calls": [],
-             "retrieval_hits": [RetrievalHit(source_id="SYN-HIST-V2-007", text="unit evidence", score=0.5)]}
+             "retrieval_hits": [RetrievalHit(source_id="SYN-P7-CASE-001", text="unit evidence", score=0.5)]}
     monkeypatch.setattr(dev_decision_cache, "decide_ticket", lambda *args, **kwargs: proposal())
     cache = CachedDecision(settings, tmp_path / "decision.json", allow_call=True)
     assert cache(state, 1, {}).next_step == "ask_clarification"
@@ -111,11 +115,11 @@ def test_cleanup_failure_preserves_result_or_original_failure(monkeypatch, setti
     monkeypatch.setattr(runtime.logger, "disabled", False)
     monkeypatch.setattr(runtime.logger, "handlers", [caplog.handler])
     monkeypatch.setattr(runtime.logger, "propagate", False)
-    corpus = load_sources(Path(__file__).resolve().parents[1] / "data/synthetic/v2/historical_cases.jsonl")
+    corpus = load_sources(Path(__file__).resolve().parents[1] / "data/synthetic/phase7_v1/historical_cases.jsonl")
     config = ProcessingSettings(_env_file=None, retrieval_mode="bm25")
     original = RuntimeError("synthetic original failure")
     close_calls = []
-    case = corpus.cases["SYN-HIST-V2-007"]
+    case = corpus.cases["SYN-P7-CASE-001"]
     hit = RetrievalHit(source_id=case.source_id, text=build_case_text(case), score=0.5)
 
     class Client:

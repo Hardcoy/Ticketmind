@@ -21,6 +21,7 @@ from ticketmind.db.testing import isolated_database
 from ticketmind.knowledge.models import KnowledgeCase, KnowledgeDataset, KnowledgeEmbedding, PRODUCTION_DATASET
 from ticketmind.knowledge.repository import KnowledgeStore
 from ticketmind.knowledge.seed import seed_knowledge, import_seed_vectors
+from ticketmind.knowledge.sources import load_sources
 from ticketmind.knowledge.service import KnowledgeWrite, approve_knowledge, change_knowledge
 from ticketmind.knowledge.schemas import KnowledgeApprove
 from ticketmind.knowledge.sync import KnowledgeSync, sync_lock
@@ -83,7 +84,7 @@ def knowledge():
         seeded = seed_knowledge(factory, config.corpus_path)
         qwen = QwenSettings(_env_file=None, DASHSCOPE_API_KEY="unused", DASHSCOPE_WORKSPACE_ID="knowledge-test")
         index, embeddings = MemoryIndex(), FakeEmbedding()
-        sync = KnowledgeSync(factory, index, qwen, embedding_factory=lambda: embeddings, embedding_budget=20)
+        sync = KnowledgeSync(factory, index, qwen, embedding_factory=lambda: embeddings, embedding_budget=seeded["total"] + 20)
         auth = AuthSettings(_env_file=None, operator_token="x" * 32, reviewer_token="y" * 32)
         app = create_app(session_factory=factory, auth_settings=auth, knowledge_sync=sync)
         with TestClient(app) as client:
@@ -124,18 +125,18 @@ def publish(k):
 
 def active_seed(k):
     dataset = k.seeded["dataset_version"]
-    return dataset, k.sync.reconcile(dataset)
+    return dataset, k.sync.reconcile(dataset, limit=len(load_sources(k.config.corpus_path).cases))
 
 
 def test_seed_idempotent_preserves_status_ids_and_production_separation(knowledge):
     k = knowledge
     dataset, rows = active_seed(k)
     second = seed_knowledge(k.factory, k.config.corpus_path)
-    assert second["created"] == 0 and second["total"] == 12
+    assert second["created"] == 0 and second["total"] == 120
     k.sync.reconcile(dataset)
-    assert k.embeddings.calls == 12 and k.index.upserts == 12
+    assert k.embeddings.calls == 120 and k.index.upserts == 120
     with k.factory() as s:
-        assert s.scalar(select(func.count()).select_from(KnowledgeCase)) == 12
+        assert s.scalar(select(func.count()).select_from(KnowledgeCase)) == 120
         assert s.scalar(select(func.count()).select_from(KnowledgeCase).where(KnowledgeCase.dataset_version == PRODUCTION_DATASET)) == 0
         assert all(s.get(KnowledgeCase, (dataset, row["source_id"])).status == "active" for row in rows)
 
@@ -156,9 +157,9 @@ def test_import_exact_existing_vectors_does_not_call_provider(knowledge, tmp_pat
     cache = VectorCache(fingerprint=fingerprint, records=[VectorRecord(**d, embedding=[1.0]*1024) for d in documents])
     (tmp_path / (fingerprint + ".json")).write_text(cache.model_dump_json(), encoding="utf-8")
     for _ in range(2):
-        assert import_seed_vectors(k.factory, k.config.corpus_path, k.qwen, tmp_path) == 12
+        assert import_seed_vectors(k.factory, k.config.corpus_path, k.qwen, tmp_path) == 120
     k.sync.embedding_budget = 0
-    assert all(r["status"] == "active" for r in k.sync.reconcile(k.seeded["dataset_version"]))
+    assert all(r["status"] == "active" for r in k.sync.reconcile(k.seeded["dataset_version"], limit=120))
     assert k.embeddings.calls == 0
 
 
@@ -339,7 +340,7 @@ def test_source_lookup_uses_requested_pg_dataset_even_without_jsonl(knowledge, m
     k = knowledge
     from ticketmind.knowledge import sources
     monkeypatch.setattr(sources, "load_sources", lambda *a: pytest.fail("source fallback used JSONL"))
-    source = "SYN-HIST-V2-007"
+    source = "SYN-P7-CASE-001"
     version = k.seeded["dataset_version"]
     assert k.client.get(f"/sources/{source}", params={"corpus_version": version}).status_code == 200
     assert k.client.get(f"/sources/{source}", params={"corpus_version": PRODUCTION_DATASET}).status_code == 404

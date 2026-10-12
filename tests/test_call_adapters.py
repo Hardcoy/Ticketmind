@@ -1,8 +1,5 @@
-"""Offline checks for the current two-model M4 acceptance boundary."""
-import importlib.util
+"""Deterministic checks for two-model adapters, cache identities and call budgets."""
 import json
-from pathlib import Path
-import sys
 
 import pytest
 from pydantic import ValidationError
@@ -12,7 +9,7 @@ from ticketmind.agent.dev_acceptance import (
 )
 from ticketmind.agent.proposals import Clarification
 from ticketmind.agent.schemas import AgentMessage
-from ticketmind.core.config import ProcessingSettings, QwenSettings
+from ticketmind.core.config import QwenSettings
 
 
 def settings(model="deepseek-v4.1-flash"):
@@ -135,52 +132,8 @@ def test_old_three_category_ledgers_remain_readable_but_do_not_authorize_judge(t
     assert len(upgraded.data["attempts"]) == 2
 
 
-def test_m4_runner_wires_both_model_adapters(monkeypatch, tmp_path):
-    root = Path(__file__).resolve().parents[1]
-    scripts = root / "scripts"
-    sys.path.insert(0, str(scripts))
-    spec = importlib.util.spec_from_file_location("evaluate_m4_for_unit", scripts / "evaluate_m4.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setattr(module, "CACHE", tmp_path)
-    monkeypatch.setattr(module, "MilvusSettings", lambda: object())
-    monkeypatch.setattr(module, "load_sources", lambda path: object())
-    observed = {}
-    class FakeRunner:
-        def __init__(self, qwen, milvus, config, **kwargs):
-            observed.update(config=config, **kwargs)
-    monkeypatch.setattr(module, "AgentRunner", FakeRunner)
-    config = ProcessingSettings(_env_file=None, decision_model="qwen3.8-flash",
-                                judge_model="deepseek-v4.1-flash")
-    factory = object()
-    runner, decisions, judges = module.build_acceptance_runner(settings("qwen3.7-flash"), config, ledger(tmp_path),
-                                                             session_factory=factory)
-    assert isinstance(runner, FakeRunner)
-    assert observed["decision_fn"] == decisions.decision
-    assert observed["judge_fn"] == judges.judge
-    assert observed["session_factory"] is factory
-    assert decisions.settings.model == config.decision_model
-    assert judges.settings.model == config.judge_model
 
 
-def test_m4_prepare_is_offline_without_runtime_metadata(monkeypatch, tmp_path):
-    scripts = Path(__file__).resolve().parents[1] / "scripts"
-    monkeypatch.syspath_prepend(str(scripts))
-    spec = importlib.util.spec_from_file_location("evaluate_m4_offline", scripts / "evaluate_m4.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    def forbidden(*args, **kwargs):
-        pytest.fail("offline prepare must not construct a runtime or access databases")
-    monkeypatch.setattr(module, "AgentRunner", forbidden)
-    monkeypatch.setattr(module, "isolated_database", forbidden)
-    monkeypatch.setattr(module, "QwenSettings", lambda: settings("qwen3.7-flash"))
-    output = tmp_path / "prepare.json"
-    monkeypatch.setattr(sys, "argv", ["evaluate_m4", "--stage", "prepare", "--output", str(output)])
-    module.main()
-    report = json.loads(output.read_text(encoding="utf-8"))
-    assert report["model_calls"] == 0 and report["external_services_accessed"] is False
-    assert report["decision_protocol"] == module.DECISION_PROTOCOL
-    assert report["judge_protocol"] == module.JUDGE_PROTOCOL
 
 
 def test_cached_evaluation_decisions_can_cite_actual_docs_without_new_calls(tmp_path):

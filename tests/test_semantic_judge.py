@@ -73,10 +73,10 @@ def make_runner(monkeypatch, decisions, judgments, **overrides):
             raise response
         return response
     from pathlib import Path
-    fixture_path = Path(__file__).resolve().parents[1] / "data/synthetic/v2/historical_cases.jsonl"
+    fixture_path = Path(__file__).resolve().parents[1] / "data/synthetic/phase7_v1/historical_cases.jsonl"
     config = ProcessingSettings(
         _env_file=None, corpus_path=fixture_path, retrieval_mode="bm25",
-        decision_model="glm-5.3", judge_model="deepseek-v4.1-flash",
+        decision_model="qwen3.8-flash", judge_model="deepseek-v4.1-flash",
     )
     args = dict(decision_fn=decision, judge_fn=judge, milvus_factory=lambda _: client,
                 corpus=load_sources(config.corpus_path))
@@ -102,7 +102,7 @@ def test_rejected_then_repaired_once(monkeypatch):
     assert set(repair_payload) == {"subject", "messages", "cases", "docs", "guardrail_feedback"}
     assert [a["status"] for a in result.usage["semantic_judge"]] == ["rejected", "passed"]
     assert len(result.state["tool_calls"]) == 1  # Only initial read-only retrieval.
-    assert runner.metadata["model_config"]["decision"] == "glm-5.3"
+    assert runner.metadata["model_config"]["decision"] == "qwen3.8-flash"
     assert runner.metadata["model_config"]["semantic_judge"] == "deepseek-v4.1-flash"
 
 
@@ -200,9 +200,9 @@ def test_real_adapters_use_distinct_models_and_record_usage(monkeypatch):
     monkeypatch.setattr(semantic_judge, "generate_text", judge_response)
     runner, _, _, _ = make_runner(monkeypatch, [], [], decision_fn=None, judge_fn=None)
     result = runner(run_input())
-    assert [c["settings"].model for c in calls] == ["glm-5.3", "deepseek-v4.1-flash"]
-    assert calls[0]["generation_options"]["extra_body"]["enable_thinking"] is True
-    assert calls[0]["generation_options"]["max_tokens"] == 4096
+    assert [c["settings"].model for c in calls] == ["qwen3.8-flash", "deepseek-v4.1-flash"]
+    assert calls[0]["generation_options"]["extra_body"]["enable_thinking"] is False
+    assert calls[0]["generation_options"]["max_tokens"] == 1600
     assert calls[1]["generation_options"]["extra_body"]["enable_thinking"] is False
     assert result.usage["semantic_judge"][0]["usage"]["total_tokens"] == 8
 
@@ -279,7 +279,7 @@ def test_resolution_source_id_in_retrieval_reaches_judge_without_quotes(monkeypa
     from ticketmind.knowledge.corpus import build_case_text
     from ticketmind.retrieval.dense import RetrievalHit
     from pathlib import Path
-    corpus = load_sources(Path(__file__).resolve().parents[1] / "data/synthetic/v2/historical_cases.jsonl")
+    corpus = load_sources(Path(__file__).resolve().parents[1] / "data/synthetic/phase7_v1/historical_cases.jsonl")
     case = next(iter(corpus.cases.values()))
     hit = RetrievalHit(source_id=case.source_id, text=build_case_text(case), score=0.5)
     proposal = {"next_step": "propose_resolution", "reply": "核对配置", "reason": "核对",
